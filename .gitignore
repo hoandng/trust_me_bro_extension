@@ -1,6 +1,35 @@
+# IDEs / Editors
 .idea/
 .vscode/
 .DS_Store
-.cache/
 
+# Environments
 .env
+.venv/
+venv/
+ENV/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+build/
+*.egg-info/
+
+# Node.js / Extension
+node_modules/
+npm-debug.log
+yarn-error.log
+dist/
+dist-tsc/
+
+# Logs and cache
+.cache/
+logs/
+*.log
+
+# Project specific
+scaffold.py
+.venv/
