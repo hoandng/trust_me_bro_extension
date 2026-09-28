@@ -1,4 +1,4 @@
-export interface AnalyzeRequest {
+﻿export interface AnalyzeRequest {
   postId: string;
   content: string;
 }
@@ -9,6 +9,13 @@ export interface AnalyzeResponse {
   explanation: string;
 }
 
+export interface SelectionPayload {
+  text: string;
+  platform: string;
+  page_url: string;
+}
+
 export type ExtensionMessage =
   | { type: 'ANALYZE_POST'; payload: AnalyzeRequest }
-  | { type: 'ANALYZE_RESULT'; payload: AnalyzeResponse };
+  | { type: 'ANALYZE_RESULT'; payload: AnalyzeResponse }
+  | { type: 'ANALYZE_REQUEST'; payload: SelectionPayload };
