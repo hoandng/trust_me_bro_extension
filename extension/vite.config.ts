@@ -26,9 +26,25 @@ function manifestPlugin(): Plugin {
         side_panel: {
           default_path: 'src/sidepanel/index.html'
         },
+        icons: {
+          '16': 'icons/icon16.png',
+          '48': 'icons/icon48.png',
+          '128': 'icons/icon128.png'
+        },
         action: {
-          default_title: 'Open Side Panel'
-        }
+          default_title: 'Open Side Panel',
+          default_icon: {
+            '16': 'icons/icon16.png',
+            '48': 'icons/icon48.png',
+            '128': 'icons/icon128.png'
+          }
+        },
+        web_accessible_resources: [
+          {
+            resources: ['icons/*.png'],
+            matches: ['<all_urls>']
+          }
+        ]
       };
       this.emitFile({
         type: 'asset',

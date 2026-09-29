@@ -5,6 +5,8 @@
 
 # Environments
 .env
+.env.*
+!.env.example
 .venv/
 venv/
 ENV/
@@ -15,13 +17,26 @@ __pycache__/
 *$py.class
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
+.pyright/
+.coverage
+.coverage.*
+coverage/
+htmlcov/
 build/
 *.egg-info/
 
 # Node.js / Extension
 node_modules/
-npm-debug.log
-yarn-error.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.npm/
+.yarn/
+.pnpm-store/
+*.tsbuildinfo
+.vite/
 dist/
 dist-tsc/
 
@@ -32,4 +47,3 @@ logs/
 
 # Project specific
 scaffold.py
-.venv/

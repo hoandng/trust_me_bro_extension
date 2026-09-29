@@ -1,0 +1,143 @@
+:root {
+  --bg-color: #ffffff;
+  --text-color: #333333;
+  --border-color: #dddddd;
+  --primary-color: #0066cc;
+  --success-color: #28a745;
+  --warning-color: #ffc107;
+  --danger-color: #dc3545;
+  --gray-color: #6c757d;
+  --bg-light: #f8f9fa;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-color: #1e1e1e;
+    --text-color: #e0e0e0;
+    --border-color: #444444;
+    --primary-color: #3399ff;
+    --bg-light: #2d2d2d;
+  }
+}
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  margin: 0;
+  padding: 16px;
+  line-height: 1.5;
+}
+h1 {
+  font-size: 1.25rem;
+  margin-top: 0;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+h1 img {
+  width: 24px;
+  height: 24px;
+}
+.hidden {
+  display: none !important;
+}
+.state-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+/* Loading */
+.spinner {
+  border: 4px solid var(--border-color);
+  border-top: 4px solid var(--primary-color);
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  animation: spin 1s linear infinite;
+  margin: 16px auto;
+}
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+.loading-text {
+  text-align: center;
+  color: var(--gray-color);
+}
+.loading-text-preview {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* Success */
+.verdict-badge {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-weight: bold;
+  color: white;
+}
+.verdict-Giả { background-color: var(--danger-color); }
+.verdict-Thật { background-color: var(--success-color); }
+.verdict-Thiếu.ngữ.cảnh { background-color: var(--warning-color); color: #000; }
+.verdict-Không.thể.kiểm.chứng { background-color: var(--gray-color); }
+
+.confidence-header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.9em;
+}
+
+.confidence-bar-container {
+  background-color: var(--border-color);
+  border-radius: 4px;
+  height: 8px;
+  overflow: hidden;
+  margin-top: 4px;
+}
+.confidence-bar {
+  height: 100%;
+  background-color: var(--primary-color);
+  transition: width 0.3s;
+}
+
+.result-explanation {
+  margin-top: 8px;
+  margin-bottom: 0;
+}
+
+.source-list {
+  padding-left: 20px;
+  margin: 8px 0;
+}
+.source-list a {
+  color: var(--primary-color);
+  text-decoration: none;
+}
+.source-list a:hover {
+  text-decoration: underline;
+}
+.card {
+  background-color: var(--bg-light);
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+}
+/* Error */
+.error-text {
+  color: var(--danger-color);
+}
+button {
+  background-color: var(--primary-color);
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 1rem;
+}
+button:hover {
+  opacity: 0.9;
+}

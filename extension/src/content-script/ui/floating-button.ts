@@ -19,9 +19,11 @@ export class FloatingButton {
     this.shadow = this.container.attachShadow({ mode: 'closed' });
 
     const btn = document.createElement('button');
-    btn.textContent = 'Fact Check';
-    btn.style.padding = '6px 12px';
-    btn.style.backgroundColor = '#1877f2';
+    btn.style.display = 'flex';
+    btn.style.alignItems = 'center';
+    btn.style.gap = '6px';
+    btn.style.padding = '6px 6px';
+    btn.style.backgroundColor = '#7baef1';
     btn.style.color = '#ffffff';
     btn.style.border = 'none';
     btn.style.borderRadius = '4px';
@@ -29,6 +31,13 @@ export class FloatingButton {
     btn.style.fontSize = '14px';
     btn.style.fontWeight = 'bold';
     btn.style.boxShadow = '0 2px 4px rgba(0,0,0,0.2)';
+
+    const icon = document.createElement('img');
+    icon.src = chrome.runtime.getURL('icons/icon16.png');
+    icon.style.width = '16px';
+    icon.style.height = '16px';
+
+    btn.appendChild(icon);
 
     btn.addEventListener('mousedown', (e) => {
       e.stopPropagation(); // Prevent document from hiding the button immediately

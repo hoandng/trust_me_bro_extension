@@ -1,12 +1,22 @@
-﻿export interface AnalyzeRequest {
+export interface AnalyzeRequest {
   postId: string;
   content: string;
 }
 
 export interface AnalyzeResponse {
-  isFake: boolean;
+  verdict: 'Thật' | 'Giả' | 'Thiếu ngữ cảnh' | 'Không thể kiểm chứng';
   confidence: number;
   explanation: string;
+  sources: Array<{ title: string; url: string }>;
+}
+
+export type AnalysisStatus = 'idle' | 'loading' | 'success' | 'error';
+
+export interface TabAnalysisState {
+  status: AnalysisStatus;
+  request?: SelectionPayload;
+  response?: AnalyzeResponse;
+  error?: string;
 }
 
 export interface SelectionPayload {

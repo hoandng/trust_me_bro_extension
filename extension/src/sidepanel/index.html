@@ -1,13 +1,62 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="vi">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Fact Check Side Panel</title>
+    <title>TrustMeBro</title>
+    <link rel="stylesheet" href="./index.css" />
   </head>
   <body>
-    <h1>Fact Check Side Panel</h1>
-    <p>Hello world from the side panel!</p>
+    <h1>
+      <img src="/icons/icon48.png" alt="Logo" />
+      TrustMeBro
+    </h1>
+
+    <div id="state-idle" class="state-container">
+      <p>Vui lòng bôi đen một đoạn văn bản trên trang web và chọn biểu tượng TrustMeBro để phân tích.</p>
+    </div>
+
+    <div id="state-loading" class="state-container hidden">
+      <div class="spinner"></div>
+      <p class="loading-text">Đang phân tích dữ liệu...</p>
+      <div class="card">
+        <strong id="loading-text-preview" class="loading-text-preview"></strong>
+      </div>
+    </div>
+
+    <div id="state-success" class="state-container hidden">
+      <div>
+        <strong>Kết luận: </strong>
+        <span id="result-verdict" class="verdict-badge"></span>
+      </div>
+      
+      <div>
+        <div class="confidence-header">
+          <span>Độ tin cậy của AI:</span>
+          <span id="result-confidence-text"></span>
+        </div>
+        <div class="confidence-bar-container">
+          <div id="result-confidence-bar" class="confidence-bar" style="width: 0%"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <strong>Giải thích:</strong>
+        <p id="result-explanation" class="result-explanation"></p>
+      </div>
+
+      <div>
+        <strong>Nguồn tham khảo:</strong>
+        <ul id="result-sources" class="source-list"></ul>
+      </div>
+    </div>
+
+    <div id="state-error" class="state-container hidden">
+      <p class="error-text">Đã xảy ra lỗi trong quá trình phân tích.</p>
+      <p id="error-message" class="card"></p>
+      <button id="btn-retry">Thử lại</button>
+    </div>
+
     <script type="module" src="./index.ts"></script>
   </body>
 </html>
