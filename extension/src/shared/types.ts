@@ -28,4 +28,4 @@ export interface SelectionPayload {
 export type ExtensionMessage =
   | { type: 'ANALYZE_POST'; payload: AnalyzeRequest }
   | { type: 'ANALYZE_RESULT'; payload: AnalyzeResponse }
-  | { type: 'ANALYZE_REQUEST'; payload: SelectionPayload };
+  | { type: 'ANALYZE_REQUEST'; payload: SelectionPayload; tabId?: number };

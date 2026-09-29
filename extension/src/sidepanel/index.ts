@@ -129,11 +129,21 @@ function renderSuccess(response: AnalyzeResponse) {
   }
 }
 
-btnRetry.addEventListener('click', () => {
-  // Simply revert to idle state, user can retry by re-selecting
+btnRetry.addEventListener('click', async () => {
   if (currentTabId) {
-    const state: TabAnalysisState = { status: 'idle' };
-    chrome.storage.session.set({ [`tabState_${currentTabId}`]: state });
+    const key = `tabState_${currentTabId}`;
+    const data = await chrome.storage.session.get(key);
+    const state = data[key] as TabAnalysisState | undefined;
+    
+    if (state && state.request) {
+      chrome.runtime.sendMessage({
+        type: 'ANALYZE_REQUEST',
+        payload: state.request,
+        tabId: currentTabId
+      });
+    } else {
+      chrome.storage.session.set({ [key]: { status: 'idle' } });
+    }
   }
 });
 

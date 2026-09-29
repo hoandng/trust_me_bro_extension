@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     tavily_api_key: str = ""
     factcheck_api_key: str = ""
     extension_api_key: str = ""
+    allowed_origins: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
