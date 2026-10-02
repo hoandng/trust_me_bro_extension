@@ -7,15 +7,30 @@ const stateSuccess = document.getElementById('state-success') as HTMLDivElement;
 const stateError = document.getElementById('state-error') as HTMLDivElement;
 
 const loadingTextPreview = document.getElementById('loading-text-preview') as HTMLElement;
-const resultVerdict = document.getElementById('result-verdict') as HTMLSpanElement;
+const loadingStepText = document.getElementById('loading-step-text') as HTMLParagraphElement;
+
+const successTextPreview = document.getElementById('success-text-preview') as HTMLParagraphElement;
+const btnReadMore = document.getElementById('btn-read-more') as HTMLButtonElement;
+
+const serviceWarning = document.getElementById('service-warning') as HTMLDivElement;
+
+const resultVerdict = document.getElementById('result-verdict') as HTMLDivElement;
+const verdictIcon = document.getElementById('verdict-icon') as HTMLSpanElement;
+const verdictText = document.getElementById('verdict-text') as HTMLSpanElement;
+
 const resultConfidenceText = document.getElementById('result-confidence-text') as HTMLSpanElement;
 const resultConfidenceBar = document.getElementById('result-confidence-bar') as HTMLDivElement;
+const confidenceProgress = document.getElementById('confidence-progress') as HTMLDivElement;
+
 const resultExplanation = document.getElementById('result-explanation') as HTMLParagraphElement;
 const resultSources = document.getElementById('result-sources') as HTMLUListElement;
+
 const errorMessage = document.getElementById('error-message') as HTMLParagraphElement;
 const btnRetry = document.getElementById('btn-retry') as HTMLButtonElement;
+const btnCopy = document.getElementById('btn-copy') as HTMLButtonElement;
 
 let currentTabId: number | null = null;
+let loadingInterval: number | null = null;
 
 async function init() {
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -46,6 +61,33 @@ async function init() {
       await loadState(currentTabId);
     }
   });
+
+  // Setup event listeners
+  btnReadMore.addEventListener('click', () => {
+    const isExpanded = successTextPreview.classList.toggle('expanded');
+    btnReadMore.textContent = isExpanded ? 'Thu gọn' : 'Xem thêm';
+    btnReadMore.setAttribute('aria-expanded', isExpanded.toString());
+  });
+
+  btnCopy.addEventListener('click', handleCopyResult);
+
+  btnRetry.addEventListener('click', async () => {
+    if (currentTabId) {
+      const key = `tabState_${currentTabId}`;
+      const data = await chrome.storage.session.get(key);
+      const state = data[key] as TabAnalysisState | undefined;
+      
+      if (state && state.request) {
+        chrome.runtime.sendMessage({
+          type: 'ANALYZE_REQUEST',
+          payload: state.request,
+          tabId: currentTabId
+        });
+      } else {
+        chrome.storage.session.set({ [key]: { status: 'idle' } });
+      }
+    }
+  });
 }
 
 async function loadState(tabId: number) {
@@ -64,6 +106,32 @@ function hideAllStates() {
   stateLoading.classList.add('hidden');
   stateSuccess.classList.add('hidden');
   stateError.classList.add('hidden');
+  stopLoadingAnimation();
+}
+
+const LOADING_STEPS = [
+  'Đang tách ý chính...',
+  'Đang tìm kiếm nguồn đối chứng...',
+  'Đang đánh giá độ tin cậy...'
+];
+
+function startLoadingAnimation() {
+  let stepIndex = 0;
+  loadingStepText.textContent = LOADING_STEPS[0];
+  
+  if (loadingInterval) clearInterval(loadingInterval);
+  
+  loadingInterval = window.setInterval(() => {
+    stepIndex = (stepIndex + 1) % LOADING_STEPS.length;
+    loadingStepText.textContent = LOADING_STEPS[stepIndex];
+  }, 2500);
+}
+
+function stopLoadingAnimation() {
+  if (loadingInterval) {
+    clearInterval(loadingInterval);
+    loadingInterval = null;
+  }
 }
 
 function renderState(state: TabAnalysisState) {
@@ -79,11 +147,15 @@ function renderState(state: TabAnalysisState) {
       if (state.request?.text) {
         loadingTextPreview.textContent = state.request.text;
       }
+      startLoadingAnimation();
       break;
 
     case 'success':
       stateSuccess.classList.remove('hidden');
       if (state.response) {
+        if (state.request?.text) {
+          setupTextPreview(state.request.text);
+        }
         renderSuccess(state.response);
       }
       break;
@@ -95,56 +167,139 @@ function renderState(state: TabAnalysisState) {
   }
 }
 
+function setupTextPreview(text: string) {
+  successTextPreview.textContent = text;
+  successTextPreview.classList.remove('expanded');
+  btnReadMore.textContent = 'Xem thêm';
+  btnReadMore.setAttribute('aria-expanded', 'false');
+  
+  // Need to check if text needs truncation (approximate logic since scrollHeight is tricky before render)
+  if (text.length > 150) {
+    btnReadMore.classList.remove('hidden');
+  } else {
+    btnReadMore.classList.add('hidden');
+  }
+}
+
+function getVerdictInfo(verdict: string) {
+  switch (verdict) {
+    case 'Thật': return { class: 'verdict-True', icon: '✅', text: 'Đáng tin cậy' };
+    case 'Giả': return { class: 'verdict-False', icon: '❌', text: 'Sai sự thật' };
+    case 'Thiếu ngữ cảnh': return { class: 'verdict-Mixed', icon: '⚠️', text: 'Thiếu ngữ cảnh' };
+    default: return { class: 'verdict-Unverified', icon: '❓', text: 'Chưa thể xác minh' };
+  }
+}
+
 function renderSuccess(response: AnalyzeResponse) {
+  // Service warning
+  if (response.service_status && response.service_status !== 'ok') {
+    serviceWarning.classList.remove('hidden');
+  } else {
+    serviceWarning.classList.add('hidden');
+  }
+
   // Verdict
-  resultVerdict.textContent = response.verdict;
-  resultVerdict.className = 'verdict-badge'; // reset
-  const verdictClass = `verdict-${response.verdict.replace(/\s+/g, '.')}`;
-  resultVerdict.classList.add(verdictClass);
+  const vInfo = getVerdictInfo(response.verdict);
+  resultVerdict.className = `verdict-badge ${vInfo.class}`;
+  verdictIcon.textContent = vInfo.icon;
+  verdictText.textContent = vInfo.text;
 
   // Confidence
   resultConfidenceText.textContent = `${response.confidence}%`;
   resultConfidenceBar.style.width = `${response.confidence}%`;
+  confidenceProgress.setAttribute('aria-valuenow', response.confidence.toString());
 
   // Explanation
   resultExplanation.textContent = response.explanation;
 
   // Sources
-  resultSources.textContent = ''; // Avoid innerHTML completely
+  resultSources.textContent = ''; // Clear existing
   if (response.sources && response.sources.length > 0) {
     response.sources.forEach(source => {
       const li = document.createElement('li');
+      li.className = 'source-item';
+
+      const header = document.createElement('div');
+      header.className = 'source-header';
+
+      const publisher = document.createElement('span');
+      publisher.className = 'source-publisher';
+      publisher.textContent = source.publisher || 'Nguồn bên ngoài';
+
+      header.appendChild(publisher);
+
+      if (source.stance) {
+        const stanceBadge = document.createElement('span');
+        const sType = source.stance.toLowerCase();
+        
+        let stanceClass = 'stance-neutral';
+        let stanceText = 'Trung lập';
+        if (sType.includes('support')) { stanceClass = 'stance-support'; stanceText = 'Ủng hộ'; }
+        else if (sType.includes('refute')) { stanceClass = 'stance-refute'; stanceText = 'Bác bỏ'; }
+        
+        stanceBadge.className = `stance-badge ${stanceClass}`;
+        stanceBadge.textContent = stanceText;
+        header.appendChild(stanceBadge);
+      }
+
+      li.appendChild(header);
+
+      const titleEl = document.createElement('h4');
+      titleEl.className = 'source-title';
       const a = document.createElement('a');
       a.href = source.url;
       a.target = '_blank';
       a.rel = 'noopener noreferrer';
-      a.textContent = source.title; // safe text rendering
-      li.appendChild(a);
+      a.textContent = source.title || source.url;
+      titleEl.appendChild(a);
+      li.appendChild(titleEl);
+
+      if (source.snippet) {
+        const snippetEl = document.createElement('p');
+        snippetEl.className = 'source-snippet';
+        snippetEl.textContent = source.snippet;
+        li.appendChild(snippetEl);
+      }
+
       resultSources.appendChild(li);
     });
   } else {
     const li = document.createElement('li');
-    li.textContent = 'Không có nguồn tham khảo.';
+    li.textContent = 'Không tìm thấy nguồn tham khảo độc lập.';
     resultSources.appendChild(li);
   }
 }
 
-btnRetry.addEventListener('click', async () => {
-  if (currentTabId) {
-    const key = `tabState_${currentTabId}`;
-    const data = await chrome.storage.session.get(key);
-    const state = data[key] as TabAnalysisState | undefined;
+async function handleCopyResult() {
+  try {
+    const verdict = verdictText.textContent || '';
+    const confidence = resultConfidenceText.textContent || '';
+    const explanation = resultExplanation.textContent || '';
     
-    if (state && state.request) {
-      chrome.runtime.sendMessage({
-        type: 'ANALYZE_REQUEST',
-        payload: state.request,
-        tabId: currentTabId
+    let text = `[TrustMeBro] Kết quả kiểm chứng:\n- Kết luận: ${verdict} (${confidence})\n- Giải thích: ${explanation}\n\nNguồn tham khảo:\n`;
+    
+    const sourceItems = resultSources.querySelectorAll('.source-item');
+    if (sourceItems.length > 0) {
+      sourceItems.forEach((item, index) => {
+        const a = item.querySelector('a');
+        text += `${index + 1}. ${a?.textContent} - ${a?.href}\n`;
       });
     } else {
-      chrome.storage.session.set({ [key]: { status: 'idle' } });
+      text += 'Không có nguồn tham khảo.\n';
     }
+
+    text += '\n*Lưu ý: Kết quả do AI tổng hợp, chỉ mang tính tham khảo.*';
+
+    await navigator.clipboard.writeText(text);
+    
+    const originalText = btnCopy.textContent;
+    btnCopy.textContent = '✅ Đã sao chép';
+    setTimeout(() => {
+      btnCopy.textContent = originalText;
+    }, 2000);
+  } catch (err) {
+    console.error('Failed to copy: ', err);
   }
-});
+}
 
 init().catch(console.error);

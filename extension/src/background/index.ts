@@ -78,7 +78,14 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, _sendRe
         verdict: verdictMap[data.verdict] || 'Không thể kiểm chứng',
         confidence: Math.round(data.confidence_score * 100),
         explanation: data.explanation,
-        sources: data.sources.map((s: any) => ({ title: s.title, url: s.url }))
+        sources: data.sources ? data.sources.map((s: any) => ({ 
+          title: s.title, 
+          url: s.url,
+          publisher: s.publisher_name || s.publisher || '',
+          snippet: s.snippet || '',
+          stance: s.stance || ''
+        })) : [],
+        service_status: data.service_status
       };
 
       setTabState(tabId, {

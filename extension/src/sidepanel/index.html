@@ -8,8 +8,8 @@
   </head>
   <body>
     <h1>
-      <img src="/icons/icon48.png" alt="Logo" />
-      TrustMeBro
+      <img src="/icons/icon48.png" alt="" aria-hidden="true" />
+      <span>TrustMeBro</span>
     </h1>
 
     <div id="state-idle" class="state-container">
@@ -17,25 +17,44 @@
     </div>
 
     <div id="state-loading" class="state-container hidden">
-      <div class="spinner"></div>
-      <p class="loading-text">Đang phân tích dữ liệu...</p>
+      <div class="spinner" role="status" aria-label="Đang xử lý"></div>
+      <div class="loading-steps" aria-live="polite">
+        <p id="loading-step-text" class="loading-text">Đang tách ý chính...</p>
+      </div>
       <div class="card">
-        <strong id="loading-text-preview" class="loading-text-preview"></strong>
+        <strong>Văn bản đang phân tích:</strong>
+        <p id="loading-text-preview" class="text-preview"></p>
       </div>
     </div>
 
     <div id="state-success" class="state-container hidden">
-      <div>
+      <!-- Cảnh báo lỗi service -->
+      <div id="service-warning" class="warning-badge hidden" role="alert">
+        ⚠️ Kết quả có thể chưa đầy đủ do lỗi kết nối nội bộ.
+      </div>
+
+      <div class="card bg-white">
+        <strong>Văn bản đã phân tích:</strong>
+        <div class="text-preview-container">
+          <p id="success-text-preview" class="text-preview"></p>
+          <button id="btn-read-more" class="btn-link hidden" aria-expanded="false">Xem thêm</button>
+        </div>
+      </div>
+
+      <div class="verdict-container">
         <strong>Kết luận: </strong>
-        <span id="result-verdict" class="verdict-badge"></span>
+        <div id="result-verdict" class="verdict-badge" role="status">
+          <span id="verdict-icon" aria-hidden="true"></span>
+          <span id="verdict-text"></span>
+        </div>
       </div>
       
       <div>
         <div class="confidence-header">
-          <span>Độ tin cậy của AI:</span>
-          <span id="result-confidence-text"></span>
+          <label id="confidence-label">Độ tin cậy của AI:</label>
+          <span id="result-confidence-text" aria-labelledby="confidence-label"></span>
         </div>
-        <div class="confidence-bar-container">
+        <div class="confidence-bar-container" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" id="confidence-progress">
           <div id="result-confidence-bar" class="confidence-bar" style="width: 0%"></div>
         </div>
       </div>
@@ -49,12 +68,20 @@
         <strong>Nguồn tham khảo:</strong>
         <ul id="result-sources" class="source-list"></ul>
       </div>
+
+      <div class="disclaimer">
+        <small><i>Lưu ý: Kết quả do AI tổng hợp, chỉ mang tính tham khảo. Hãy tự đối chiếu với các nguồn uy tín.</i></small>
+      </div>
+
+      <div class="actions">
+        <button id="btn-copy" class="btn-secondary" title="Sao chép kết quả">📋 Sao chép kết quả</button>
+      </div>
     </div>
 
     <div id="state-error" class="state-container hidden">
-      <p class="error-text">Đã xảy ra lỗi trong quá trình phân tích.</p>
+      <p class="error-text" role="alert">Đã xảy ra lỗi trong quá trình phân tích.</p>
       <p id="error-message" class="card"></p>
-      <button id="btn-retry">Thử lại</button>
+      <button id="btn-retry" class="btn-primary">Thử lại</button>
     </div>
 
     <script type="module" src="./index.ts"></script>

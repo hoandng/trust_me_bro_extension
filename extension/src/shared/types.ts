@@ -3,11 +3,20 @@ export interface AnalyzeRequest {
   content: string;
 }
 
+export interface SourceItem {
+  title: string;
+  url: string;
+  publisher?: string;
+  snippet?: string;
+  stance?: string;
+}
+
 export interface AnalyzeResponse {
   verdict: 'Thật' | 'Giả' | 'Thiếu ngữ cảnh' | 'Không thể kiểm chứng';
   confidence: number;
   explanation: string;
-  sources: Array<{ title: string; url: string }>;
+  sources: SourceItem[];
+  service_status?: string;
 }
 
 export type AnalysisStatus = 'idle' | 'loading' | 'success' | 'error';
