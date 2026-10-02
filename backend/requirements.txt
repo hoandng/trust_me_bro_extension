@@ -7,3 +7,6 @@ pytest
 pytest-asyncio
 respx
 ruff
+
+google-genai
+python-dotenv

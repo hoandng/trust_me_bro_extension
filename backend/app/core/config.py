@@ -3,6 +3,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     gemini_api_key: str = ""
+    gemini_model: str = "gemini-3.1-flash-lite"
     tavily_api_key: str = ""
     tavily_include_domains: list[str] = []
     tavily_exclude_domains: list[str] = []
