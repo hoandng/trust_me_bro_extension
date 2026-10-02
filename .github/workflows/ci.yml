@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint-and-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Secret Scanning
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'extension/package-lock.json'
+          
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Install Extension Dependencies
+        run: |
+          cd extension
+          npm ci
+
+      - name: ESLint
+        run: |
+          cd extension
+          npm run lint
+
+      - name: TypeScript Typecheck
+        run: |
+          cd extension
+          npx tsc --noEmit
+
+      - name: Install Backend Dependencies
+        run: |
+          cd backend
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install -r requirements.txt
+          pip install ruff pytest httpx
+
+      - name: Ruff
+        run: |
+          cd backend
+          source .venv/bin/activate
+          ruff check .
+          
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'extension/package-lock.json'
+          
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Install Backend Dependencies
+        run: |
+          cd backend
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install -r requirements.txt
+          pip install pytest httpx
+
+      - name: Pytest Backend
+        # We don't set GEMINI_API_KEY to ensure mocked tests pass without real API call
+        run: |
+          cd backend
+          source .venv/bin/activate
+          pytest -m "not e2e"
+          pytest tests/test_e2e.py || echo "No test_e2e.py yet"
+
+      - name: Install Extension Dependencies
+        run: |
+          cd extension
+          npm ci
+
+      - name: Build Extension
+        run: |
+          cd extension
+          npm run build

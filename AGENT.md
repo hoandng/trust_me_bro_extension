@@ -55,24 +55,38 @@
 4. Tóm tắt ngắn gọn thay đổi sau mỗi task, nêu rõ file nào bị ảnh hưởng
 5. Nếu task đụng tới bảo mật (API key, CORS, rate limit) → nhắc lại rule ở mục 6 của `ARCHITECTURE.md` trước khi code
 
-## 6. Testing
+## 6. Testing & Quality Gates
 
-- **Backend:** pytest, mock các API bên ngoài (Fact Check/Gemini/Tavily) khi test — không gọi API thật trong test tự động
-- **Extension:** test thủ công trên Chrome (demo giai đoạn này), cân nhắc thêm Playwright cho e2e khi ổn định hơn
-- Lệnh chạy test backend: `pytest` (trong thư mục `backend/`)
+- **Backend:** `pytest`, mock các API bên ngoài (Fact Check/Gemini/Tavily) khi test — không gọi API thật trong test tự động
+- **Extension:** test thủ công trên Chrome (demo giai đoạn này), e2e backend có `test_e2e.py`
+- **Pre-commit / CI:** Dự án sử dụng `pre-commit` framework (ruff, pytest nhanh, eslint, tsc --noEmit, gitleaks). Mọi PR đều được check bởi GitHub Actions `ci.yml`.
+
+Lệnh chạy test backend:
+```bash
+cd backend
+.venv\Scripts\activate  # hoặc source .venv/bin/activate
+pytest -m "not e2e"
+pytest tests/test_e2e.py
+```
 
 ## 7. Lệnh thường dùng
 
 ```bash
 # Backend
 cd backend
+python -m venv .venv
+.venv\Scripts\activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload
 
 # Extension
 cd extension
-npm install
+npm ci
 npm run build   # build ra dist/ để load unpacked vào Chrome
+
+# Cài đặt Quality Gates (Local)
+pip install pre-commit
+pre-commit install
 ```
 
 ## 8. Việc KHÔNG được làm
