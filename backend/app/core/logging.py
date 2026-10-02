@@ -4,14 +4,21 @@ import logging
 
 class JSONFormatter(logging.Formatter):
     def format(self, record):
+        message = record.getMessage()
+        # Redact API Keys if they accidentally get logged
+        import re
+        message = re.sub(r'(api[_-]?key)=([a-zA-Z0-9_\-]+)', r'\1=***', message, flags=re.IGNORECASE)
+        message = re.sub(r'(Authorization: Bearer\s+)([a-zA-Z0-9_\-\.]+)', r'\1***', message, flags=re.IGNORECASE)
+        message = re.sub(r'(X-API-Key:?\s*)([a-zA-Z0-9_\-]+)', r'\1***', message, flags=re.IGNORECASE)
+        
         log_record = {
             "level": record.levelname,
             "name": record.name,
-            "message": record.getMessage(),
+            "message": message,
             "time": self.formatTime(record, self.datefmt)
         }
         if record.exc_info:
-            log_record["exc_info"] = self.formatException(record.exc_info)
+            log_record["exc_info"] = "Redacted stacktrace" if record.levelname in ["ERROR", "CRITICAL"] else self.formatException(record.exc_info)
         return json.dumps(log_record)
 
 def setup_logging():

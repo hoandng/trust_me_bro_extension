@@ -42,9 +42,12 @@ function manifestPlugin(): Plugin {
         web_accessible_resources: [
           {
             resources: ['icons/*.png'],
-            matches: ['<all_urls>']
+            matches: ['https://*.facebook.com/*']
           }
-        ]
+        ],
+        content_security_policy: {
+          extension_pages: "script-src 'self'; object-src 'self';"
+        }
       };
       this.emitFile({
         type: 'asset',

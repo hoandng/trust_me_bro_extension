@@ -110,7 +110,7 @@ function renderSuccess(response: AnalyzeResponse) {
   resultExplanation.textContent = response.explanation;
 
   // Sources
-  resultSources.innerHTML = ''; // safe as we append text nodes/elements
+  resultSources.textContent = ''; // Avoid innerHTML completely
   if (response.sources && response.sources.length > 0) {
     response.sources.forEach(source => {
       const li = document.createElement('li');
