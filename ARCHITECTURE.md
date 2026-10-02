@@ -91,13 +91,22 @@ Mô hình: **Client-Server**, trong đó Client là Chrome Extension (Manifest V
   - `orchestrator` không biết chi tiết implementation của từng service, chỉ gọi qua interface chung → dễ thêm service mới (chỉ cần đăng ký thêm vào danh sách service mà orchestrator gọi).
   - Đây là pattern chuẩn cho sản phẩm thương mại: tách "nguồn dữ liệu" (data source) khỏi "logic nghiệp vụ" (business logic).
 
-### 2.3. Luồng xử lý tại Orchestrator (logic lõi)
-1. Nhận text từ request
-2. Gọi song song (`asyncio.gather`):
-   - `factcheck_service`: tìm claim đã được fact-check trước đó liên quan đến nội dung
-   - `tavily_service`: tìm kiếm nguồn tin tức/bài viết liên quan để đối chiếu
-   - `gemini_service`: phân tích ngữ nghĩa, tóm tắt claim chính, đối chiếu với kết quả từ 2 API trên, sinh ra đánh giá + giải thích
-3. Tổng hợp kết quả → trả về:
+### 2.3. Luồng xử lý tại Orchestrator (logic lõi - Đã cập nhật v0.2)
+1. **Giai đoạn 0 (Trích xuất & Lọc):**
+   - `gemini_service.extract_claims` phân tích văn bản để tìm claim chính, ngôn ngữ và các câu query tối ưu.
+   - Nếu `is_checkable=false` (không có yếu tố kiểm chứng được như ý kiến cá nhân, câu hỏi) -> trả ngay verdict "unverified" kèm giải thích, không gọi tiếp API để tiết kiệm chi phí.
+2. **Giai đoạn 1 (Thu thập bằng chứng):**
+   - Gọi song song (`asyncio.gather`):
+     - `factcheck_service`: tìm claim đã được fact-check trước đó.
+     - `tavily_service`: tìm kiếm nguồn tin tức/bài viết liên quan đối chiếu.
+3. **Giai đoạn 2 (Đánh giá tổng hợp):**
+   - `gemini_service.assess`: nhận toàn bộ sources thu thập được từ Giai đoạn 1 và thực hiện đánh giá cuối cùng.
+   - Orchestrator áp dụng các quy tắc:
+     - Ưu tiên nguồn từ Fact Check: nếu có kết quả rõ ràng, chỉnh lại confidence và đưa lên đầu danh sách sources.
+     - Lọc trùng URL, giới hạn tối đa 8 nguồn.
+     - Xử lý lỗi linh hoạt (degraded result) nếu 1 service sập, hoặc timeout.
+     - Đảm bảo nhất quán giữa `verdict` và `confidence_score`.
+4. Tổng hợp kết quả → trả về:
    ```json
    {
      "verdict": "likely_false | likely_true | unverified | mixed",
@@ -105,7 +114,12 @@ Mô hình: **Client-Server**, trong đó Client là Chrome Extension (Manifest V
      "explanation": "Giải thích ngắn gọn tại sao",
      "sources": [
        {"title": "...", "url": "...", "publisher": "...", "relevance": "..."}
-     ]
+     ],
+     "service_status": {
+        "factcheck": "ok|error|empty",
+        "tavily": "ok|error|empty",
+        "gemini": "ok|error|empty"
+     }
    }
    ```
 

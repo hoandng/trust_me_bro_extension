@@ -9,33 +9,25 @@ from fastapi import APIRouter, Depends
 
 from app.schemas.request import AnalyzeRequest
 from app.schemas.response import AnalyzeResponse, ServiceStatus, Source
-from app.api.deps import verify_api_key
+from app.api.deps import verify_api_key, get_orchestrator
+from app.orchestrator.analysis_orchestrator import AnalysisOrchestrator
+from app.schemas.internal import AnalysisContext
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 @router.post("/analyze", response_model=AnalyzeResponse)
-async def analyze_text(request: AnalyzeRequest, api_key: str = Depends(verify_api_key)):
+async def analyze_text(
+    request: AnalyzeRequest, 
+    api_key: str = Depends(verify_api_key),
+    orchestrator: AnalysisOrchestrator = Depends(get_orchestrator)
+):
     # Do not log user text content directly according to requirements
     logger.info(f"Received analysis request for platform {request.platform} with text length {len(request.text)}")
     
-    # Mock data return
-    return AnalyzeResponse(
-        verdict="likely_false",
-        confidence_score=0.85,
-        explanation="This is a mock explanation. The claim is likely false based on known facts.",
-        sources=[
-            Source(
-                title="Mock Source Title",
-                url="https://example.com/factcheck",
-                publisher="Mock Publisher",
-                snippet="Mock snippet refuting the claim.",
-                stance="refutes"
-            )
-        ],
-        service_status=ServiceStatus(
-            factcheck="ok",
-            tavily="ok",
-            gemini="ok"
-        )
+    ctx = AnalysisContext(
+        text=request.text,
+        lang=request.lang
     )
+
+    return await orchestrator.analyze(ctx)

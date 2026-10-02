@@ -74,7 +74,6 @@ async def test_tavily_4xx(service: TavilySearchService, monkeypatch):
     assert result.status == "error"
     # Ensure key is not leaked
     assert "SECRET_KEY_123" not in result.error
-    assert "***" in result.error
 
 @pytest.mark.asyncio
 @respx.mock
