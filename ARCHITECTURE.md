@@ -36,14 +36,14 @@ Mô hình: **Client-Server**, trong đó Client là Chrome Extension (Manifest V
 ## 2. Các thành phần chính
 
 ### 2.1. Browser Extension (Client)
-- **Nền tảng:** Chrome Extension Manifest V3 (tương thích Edge, và có thể port sang Firefox sau)
-- **Ngôn ngữ:** JavaScript/TypeScript (khuyến nghị TypeScript để dễ bảo trì khi mở rộng)
+- **Nền tảng:** Chrome Extension Manifest V3 (tương thích Edge, có thể port sang Firefox)
+- **Công nghệ cốt lõi:** TypeScript, đóng gói bằng Vite (`vite-plugin-web-extension`)
 - **Các thành phần:**
   | Module | Vai trò |
   |---|---|
   | `content-script/` | Inject vào trang Facebook, bắt sự kiện bôi đen text, hiển thị nút nổi "Phân tích đoạn văn này" |
   | `background/` (service worker) | Nhận request từ content script, gọi backend API, quản lý state, xử lý message passing |
-  | `sidepanel/` | UI hiển thị kết quả phân tích (dùng Chrome Side Panel API) |
+  | `sidepanel/` | UI hiển thị kết quả phân tích (dùng Chrome Side Panel API với DOM thao tác thuần hoặc thư viện nhẹ) |
   | `shared/` | Types, constants, utils dùng chung |
 
 - **Cách bắt sự kiện bôi đen (MVP):**
@@ -57,33 +57,35 @@ Mô hình: **Client-Server**, trong đó Client là Chrome Extension (Manifest V
 ### 2.2. Backend API (Server)
 - **Framework:** Python + FastAPI
 - **Kiến trúc API:** REST, 1 endpoint chính `POST /api/v1/analyze`
-- **Cấu trúc thư mục đề xuất:**
+- **Cấu trúc thư mục thực tế:**
   ```
   backend/
   ├── app/
   │   ├── main.py                 # entrypoint FastAPI
   │   ├── api/
+  │   │   ├── deps.py             # Dependency injection (orchestrator, rate limiter)
   │   │   └── v1/
   │   │       └── analyze.py      # route /analyze
   │   ├── core/
   │   │   ├── config.py           # đọc env, settings
-  │   │   ├── security.py         # rate limit, API key validation, CORS
-  │   │   └── logging.py
-  │   ├── services/                # MODULE HOÁ theo từng nguồn dữ liệu
-  │   │   ├── factcheck_service.py # gọi Google Fact Check Tools API
-  │   │   ├── gemini_service.py    # gọi Gemini API (phân tích/tóm tắt/đánh giá)
-  │   │   ├── tavily_service.py    # gọi Tavily API (tìm kiếm nguồn tham khảo)
-  │   │   └── base_service.py      # interface chung: mỗi service implement `async def check(text) -> SourceResult`
+  │   │   ├── rate_limit.py       # rate limiter (chống spam)
+  │   │   └── logging.py          # cấu hình logger
+  │   ├── prompts/
+  │   │   └── gemini_prompts.py   # Các mẫu prompt chi tiết cho Gemini
+  │   ├── services/               # MODULE HOÁ theo từng nguồn dữ liệu
+  │   │   ├── factcheck_service.py# gọi Google Fact Check Tools API
+  │   │   ├── gemini_service.py   # gọi Gemini API (phân tích/tóm tắt/đánh giá)
+  │   │   ├── tavily_service.py   # gọi Tavily API (tìm kiếm nguồn tham khảo)
+  │   │   └── base_service.py     # interface chung
   │   ├── orchestrator/
-  │   │   └── analysis_orchestrator.py  # gọi song song các service, tổng hợp, chấm điểm cuối
-  │   ├── schemas/
-  │   │   ├── request.py          # AnalyzeRequest (text, url, platform...)
-  │   │   └── response.py         # AnalyzeResponse (verdict, score, sources[], explanation)
-  │   └── utils/
-  ├── tests/
+  │   │   └── analysis_orchestrator.py  # gọi logic các service, tổng hợp kết quả
+  │   └── schemas/
+  │       ├── internal.py         # context / schemas dùng nội bộ
+  │       ├── request.py          # AnalyzeRequest (text, url, platform...)
+  │       └── response.py         # AnalyzeResponse (verdict, score, sources[], explanation)
+  ├── tests/                      # Unit/Integration tests
   ├── .env.example
-  ├── requirements.txt
-  └── Dockerfile
+  └── requirements.txt
   ```
 
 - **Vì sao module hoá theo `services/` + `orchestrator/`:**

@@ -20,24 +20,24 @@ Mục tiêu: chứng minh luồng hoạt động end-to-end.
 - [x] Content script: bắt sự kiện bôi đen text trên Facebook, hiện nút "Phân tích đoạn văn này"
 - [x] Background script: gửi text đã chọn sang backend, nhận response
 - [x] Side panel UI: hiển thị kết quả (verdict, độ tin cậy, giải thích, danh sách nguồn)
-- [ ] Backend: endpoint `POST /api/v1/analyze`
-- [ ] Service: tích hợp Google Fact Check Tools API
-- [ ] Service: tích hợp Tavily API (tìm nguồn liên quan)
-- [ ] Service: tích hợp Gemini API (phân tích + tổng hợp đánh giá cuối)
-- [ ] Orchestrator: gọi song song 3 service, tổng hợp kết quả thành 1 response chuẩn
-- [ ] Bảo mật cơ bản: API key backend qua `.env`, CORS giới hạn theo extension ID, giới hạn độ dài input
-- [ ] Test thủ công toàn luồng trên 5-10 bài post Facebook thực tế (có tin thật, tin giả, tin chưa rõ)
+- [x] Backend: endpoint `POST /api/v1/analyze`
+- [x] Service: tích hợp Google Fact Check Tools API
+- [x] Service: tích hợp Tavily API (tìm nguồn liên quan)
+- [x] Service: tích hợp Gemini API (phân tích + tổng hợp đánh giá cuối)
+- [x] Orchestrator: gọi song song 3 service, tổng hợp kết quả thành 1 response chuẩn
+- [x] Bảo mật cơ bản: API key backend qua `.env`, CORS giới hạn theo extension ID, giới hạn độ dài input
+- [x] Test thủ công toàn luồng trên 5-10 bài post Facebook thực tế (có tin thật, tin giả, tin chưa rõ)
 
 ## Milestone 2: Ổn định & UX
 
 Mục tiêu: extension dùng được mượt mà, xử lý lỗi tốt, sẵn sàng cho nhóm nhỏ dùng thử.
 
-- [ ] Xử lý trạng thái loading/error rõ ràng trong side panel
-- [ ] Rate limiting phía backend (tránh spam/tốn quota API trả phí)
-- [ ] Retry/fallback khi 1 trong 3 API bên ngoài lỗi hoặc timeout (không để cả response fail vì 1 service hỏng)
-- [ ] Giới hạn độ dài văn bản được phép gửi phân tích + thông báo rõ cho người dùng
-- [ ] Logging metadata (không log nội dung text đầy đủ) để debug và theo dõi usage
-- [ ] Viết test tự động cho backend (mock 3 API ngoài)
+- [x] Xử lý trạng thái loading/error rõ ràng trong side panel
+- [x] Rate limiting phía backend (tránh spam/tốn quota API trả phí)
+- [x] Retry/fallback khi 1 trong 3 API bên ngoài lỗi hoặc timeout (không để cả response fail vì 1 service hỏng)
+- [x] Giới hạn độ dài văn bản được phép gửi phân tích + thông báo rõ cho người dùng
+- [x] Logging metadata (không log nội dung text đầy đủ) để debug và theo dõi usage
+- [x] Viết test tự động cho backend (mock 3 API ngoài)
 
 ## Milestone 3: Nâng cấp tính năng (theo yêu cầu ban đầu)
 
