@@ -134,6 +134,7 @@ Mô hình: **Client-Server**, trong đó Client là Chrome Extension (Manifest V
 - Chưa có database → không lưu lịch sử, không cache → mỗi lần phân tích đều tốn API call thật (cân nhắc thêm cache ở bản sau để tiết kiệm chi phí).
 - Chỉ hỗ trợ Facebook, DOM selector có thể hỏng khi Facebook đổi giao diện → cần thiết kế adapter dễ sửa (mục 2.1).
 - Static API key giữa extension–backend chưa đủ an toàn cho production.
+- Google Fact Check Tools API có độ phủ dữ liệu tiếng Việt còn hạn chế, có thể thường xuyên trả về trạng thái rỗng ("empty") khi truy vấn nội dung tiếng Việt.
 
 ## 6. Định hướng mở rộng (đã tính trước trong kiến trúc)
 - Thêm mạng xã hội mới → thêm adapter mới trong extension, không đổi backend.
