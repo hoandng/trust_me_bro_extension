@@ -28,7 +28,7 @@ class AnalysisOrchestrator:
         try:
             extraction = await asyncio.wait_for(
                 self.gemini_service.extract_claims(ctx.text, ctx.lang),
-                timeout=10.0
+                timeout=20.0
             )
         except Exception as e:
             status_dict["gemini"] = "error"
@@ -131,7 +131,7 @@ class AnalysisOrchestrator:
         try:
             assessment = await asyncio.wait_for(
                 self.gemini_service.assess(ctx.text, ctx.claim, sorted_sources),
-                timeout=10.0
+                timeout=20.0
             )
         except Exception:
             status_dict["gemini"] = "error"
@@ -145,6 +145,12 @@ class AnalysisOrchestrator:
 
         if assessment.status == "error":
             status_dict["gemini"] = "error"
+
+        if assessment.source_stances:
+            stance_map = {st.url: st.stance for st in assessment.source_stances}
+            for s in sorted_sources:
+                if s.url in stance_map:
+                    s.stance = stance_map[s.url]
 
         # Rule: If FactCheck has clear results, prioritize it
         verdict = assessment.verdict

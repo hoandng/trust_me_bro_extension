@@ -63,7 +63,8 @@ class GeminiService:
                     model=self.model,
                     system_instruction=EXTRACT_CLAIMS_PROMPT,
                     input=prompt,
-                    response_format=response_format
+                    response_format=response_format,
+                    generation_config={"thinking_level": "low"},
                 )
                 
                 raw_output = interaction.output_text
@@ -117,7 +118,8 @@ class GeminiService:
                     model=self.model,
                     system_instruction=ASSESS_PROMPT,
                     input=input_text,
-                    response_format=response_format
+                    response_format=response_format,
+                    generation_config={"thinking_level": "low"},
                 )
 
                 raw_output = interaction.output_text

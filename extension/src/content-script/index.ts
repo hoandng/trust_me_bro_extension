@@ -1,4 +1,4 @@
-﻿import { getAdapterForUrl } from './adapters';
+import { getAdapterForUrl } from './adapters';
 import { FloatingButton } from './ui/floating-button';
 
 let floatingButton: FloatingButton | null = null;
@@ -10,6 +10,10 @@ function init() {
 
   if (!adapter) {
     return; // No adapter for this site
+  }
+
+  if (adapter.init) {
+    adapter.init();
   }
 
   floatingButton = new FloatingButton();

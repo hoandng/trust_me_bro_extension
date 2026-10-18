@@ -1,7 +1,9 @@
-﻿import { PlatformAdapter } from './platform-adapter';
+import { PlatformAdapter } from './platform-adapter';
 import { FacebookAdapter } from './facebook-adapter';
+import { RedditAdapter } from './reddit-adapter';
 
 const adapters: PlatformAdapter[] = [
+  new RedditAdapter(),
   new FacebookAdapter()
 ];
 

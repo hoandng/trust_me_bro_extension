@@ -5,7 +5,7 @@ env_path = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(os.path.
 
 class Settings(BaseSettings):
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-3.1-flash-lite"
+    gemini_model: str = "gemini-3.8-flash"
     tavily_api_key: str = ""
     tavily_include_domains: list[str] = []
     tavily_exclude_domains: list[str] = []

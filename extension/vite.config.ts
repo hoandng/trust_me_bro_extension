@@ -1,7 +1,7 @@
 import { defineConfig, Plugin } from 'vite';
 import { resolve } from 'path';
 
-const backendUrl = process.env.VITE_BACKEND_URL || 'http://localhost:3000/*';
+const backendUrl = process.env.VITE_BACKEND_URL || 'http://127.0.0.1:8000/*';
 
 function manifestPlugin(): Plugin {
   return {
@@ -12,14 +12,14 @@ function manifestPlugin(): Plugin {
         name: 'Fact Check Extension',
         version: '1.0.0',
         permissions: ['sidePanel', 'storage'],
-        host_permissions: ['https://*.facebook.com/*', backendUrl],
+        host_permissions: ['https://*.reddit.com/*', 'https://*.facebook.com/*', backendUrl],
         background: {
           service_worker: 'background/index.js',
           type: 'module'
         },
         content_scripts: [
           {
-            matches: ['https://*.facebook.com/*'],
+            matches: ['https://*.reddit.com/*', 'https://*.facebook.com/*'],
             js: ['content-script/index.js']
           }
         ],
@@ -42,7 +42,7 @@ function manifestPlugin(): Plugin {
         web_accessible_resources: [
           {
             resources: ['icons/*.png'],
-            matches: ['https://*.facebook.com/*']
+            matches: ['https://*.reddit.com/*', 'https://*.facebook.com/*']
           }
         ],
         content_security_policy: {

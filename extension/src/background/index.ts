@@ -44,7 +44,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, _sendRe
 
     // Actual API call
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
 
     fetch(`${BACKEND_URL}/api/v1/analyze`, {
       method: 'POST',
@@ -74,6 +74,14 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, _sendRe
         'unverified': 'Không thể kiểm chứng'
       };
 
+      const rawStatus = data.service_status;
+      const serviceStatus =
+        rawStatus && typeof rawStatus === 'object'
+          ? Object.values(rawStatus).includes('error')
+            ? 'error'
+            : 'ok'
+          : rawStatus || 'ok';
+
       const response = {
         verdict: verdictMap[data.verdict] || 'Không thể kiểm chứng',
         confidence: Math.round(data.confidence_score * 100),
@@ -85,7 +93,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, _sendRe
           snippet: s.snippet || '',
           stance: s.stance || ''
         })) : [],
-        service_status: data.service_status
+        service_status: serviceStatus
       };
 
       setTabState(tabId, {
@@ -98,7 +106,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, _sendRe
       clearTimeout(timeoutId);
       let errorMessage = error.message || 'Lỗi không xác định';
       if (error.name === 'AbortError' || error.message.includes('fetch')) {
-        errorMessage = 'Lỗi kết nối hoặc yêu cầu quá thời gian chờ (30s)';
+        errorMessage = 'Lỗi kết nối hoặc yêu cầu quá thời gian chờ (60s)';
       }
       setTabState(tabId, {
         status: 'error',
