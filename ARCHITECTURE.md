@@ -1,58 +1,104 @@
 # ARCHITECTURE.md
 
 > Dự án: **Trình mở rộng (browser extension) kiểm tra độ tin cậy bài đăng mạng xã hội**
-> Phiên bản tài liệu: v0.1 — Demo trên Facebook
+> Phiên bản tài liệu: v0.2 — Extension module theo tính năng (Facebook, Reddit)
 
 ## 1. Kiến trúc tổng quan
 
 Mô hình: **Client-Server**, trong đó Client là Chrome Extension (Manifest V3), Server là REST API backend độc lập đóng vai trò "orchestrator" gọi nhiều dịch vụ AI/fact-check bên ngoài rồi tổng hợp kết quả.
 
-```
-[Facebook page]
-      │  (user bôi đen text → chọn "Phân tích đoạn văn này")
-      ▼
-[Content Script] ──postMessage──► [Background/Service Worker]
-      │                                    │
-      │                                    ▼
-      │                          [Backend API] (FastAPI)
-      │                                    │
-      │                     ┌──────────────┼───────────────┐
-      │                     ▼              ▼               ▼
-      │              [Fact Check API]  [Gemini API]   [Tavily API]
-      │                     └──────────────┬───────────────┘
-      │                                    ▼
-      │                         [Orchestrator tổng hợp
-      │                          + chấm điểm + trích nguồn]
-      ▼                                    │
-[Side Panel UI] ◄───────response JSON──────┘
-(hiển thị kết quả, độ tin cậy, nguồn trích dẫn)
+```text
+[Facebook / Reddit]
+        │ chọn văn bản hoặc bấm nút bài viết
+        ▼
+[Content script] ──chrome.runtime.sendMessage──► [Background service worker]
+                                                        │ HTTP
+                                                        ▼
+                                                   [FastAPI]
+                                                        │
+                                                [Orchestrator]
+                                                        │
+                                         [Gemini / Fact Check / Tavily]
+                                                        │ kết quả
+                                                        ▼
+[Side panel] ◄──theo dõi chrome.storage.session── [Background service worker]
 ```
 
 **Vì sao chọn kiến trúc này:**
 - Tách biệt extension (chỉ làm UI + bắt sự kiện) khỏi backend (chứa toàn bộ logic AI, API key) → **bảo mật**: API key của Gemini/Tavily/Fact Check không bao giờ nằm trong code extension (client-side), tránh bị lộ khi người dùng inspect extension.
 - Backend đóng vai trò orchestrator, dễ thêm/bớt/nâng cấp nguồn dữ liệu (thêm API mới) mà không cần cập nhật extension.
-- Dễ mở rộng sang nền tảng khác (X, Reddit...) vì phần logic phân tích nằm hoàn toàn ở backend, chỉ cần viết thêm content script tương ứng cho từng nền tảng.
+- Dễ mở rộng sang nền tảng khác (X, Reddit...) vì phần logic phân tích nằm hoàn toàn ở backend, chỉ cần bổ sung adapter trong content script cho từng nền tảng.
 
 ## 2. Các thành phần chính
 
 ### 2.1. Browser Extension (Client)
-- **Nền tảng:** Chrome Extension Manifest V3 (tương thích Edge, có thể port sang Firefox)
-- **Công nghệ cốt lõi:** TypeScript, đóng gói bằng Vite (`vite-plugin-web-extension`)
-- **Các thành phần:**
-  | Module | Vai trò |
-  |---|---|
-  | `content-script/` | Inject vào trang Facebook, bắt sự kiện bôi đen text, hiển thị nút nổi "Phân tích đoạn văn này" |
-  | `background/` (service worker) | Nhận request từ content script, gọi backend API, quản lý state, xử lý message passing |
-  | `sidepanel/` | UI hiển thị kết quả phân tích (dùng Chrome Side Panel API với DOM thao tác thuần hoặc thư viện nhẹ) |
-  | `shared/` | Types, constants, utils dùng chung |
 
-- **Cách bắt sự kiện bôi đen (MVP):**
-  1. Content script lắng nghe sự kiện `selectionchange` / `mouseup` trên DOM Facebook
-  2. Khi có văn bản được chọn → hiển thị nút nổi nhỏ "🔍 Phân tích đoạn văn này" cạnh vùng chọn
-  3. User click → gửi text qua `chrome.runtime.sendMessage` đến background script
-  4. Background gọi backend API → nhận kết quả → mở Side Panel hiển thị
+- **Kiến trúc tổ chức file:** Feature-based modular architecture, tách điểm chạy của Manifest V3 khỏi module tính năng và hạ tầng.
+- **Công nghệ:** TypeScript strict, HTML/CSS và DOM thuần, Vite. Manifest được tạo bằng plugin nội bộ trong `extension/vite.config.ts`.
+- **Nền tảng hiện có:** Facebook và Reddit. Reddit có thêm nút kiểm chứng trong trang chi tiết bài viết.
 
-> Ghi chú thiết kế để dễ nâng cấp: Content script nên viết theo **adapter pattern** — mỗi mạng xã hội (Facebook, X, Reddit) có 1 file adapter riêng implement chung 1 interface (`getSelectedText()`, `injectButton()`, `getPostContext()`...). Bản demo chỉ cần `facebook-adapter.ts`, sau này thêm `x-adapter.ts`, `reddit-adapter.ts` mà không đụng vào core logic.
+```text
+extension/
+├── src/
+│   ├── entrypoints/
+│   │   ├── background.ts           # đăng ký message listener
+│   │   ├── content.ts              # khởi tạo tương tác trên trang
+│   │   └── sidepanel/              # HTML và khởi tạo side panel
+│   ├── features/
+│   │   └── analysis/
+│   │       ├── types.ts            # request, response backend/UI, trạng thái
+│   │       ├── state-store.ts      # khóa và trạng thái phân tích theo tab
+│   │       ├── background/
+│   │       │   ├── handle-analysis.ts # điều phối loading → API → success/error
+│   │       │   ├── analysis-api.ts    # endpoint phân tích
+│   │       │   └── map-response.ts    # chuyển response backend thành dữ liệu UI
+│   │       ├── content/
+│   │       │   ├── selection-controller.ts
+│   │       │   ├── adapters/       # interface, registry, Facebook, Reddit
+│   │       │   └── ui/             # nút nổi trong Shadow DOM
+│   │       └── sidepanel/
+│   │           ├── controller.ts  # sự kiện tab, subscription, retry
+│   │           ├── render.ts      # DOM, loading, kết quả, sao chép
+│   │           └── index.css
+│   ├── infrastructure/
+│   │   ├── api/backend-client.ts   # HTTP, header, timeout, lỗi mạng
+│   │   └── storage/session-store.ts # adapter chrome.storage.session
+│   └── shared/
+│       ├── messages.ts            # hợp đồng và kiểm tra message đầu vào
+│       └── config.ts              # đường dẫn side panel dùng chung với Vite
+├── tests/                         # kiểm tra module với API/Chrome mock
+├── public/icons/
+└── vite.config.ts
+```
+
+**Quy tắc phụ thuộc:**
+
+- `entrypoints/` chỉ đăng ký listener và khởi tạo tính năng.
+- `features/<tên>/` giữ logic, dữ liệu và giao diện của tính năng đó. Module background không import DOM của content script/side panel; content script không import HTTP client hoặc logic background.
+- Module dùng ở cả background và side panel đặt ở gốc tính năng, như `analysis/state-store.ts`.
+- `infrastructure/` bao bọc HTTP và Chrome Storage; không import logic từ `features/` hoặc `entrypoints/`.
+- `shared/` chứa hợp đồng giao tiếp và cấu hình dùng chung. `shared/messages.ts` chỉ import **type** của tính năng, không kéo mã thực thi của tính năng sang ngữ cảnh khác.
+- Mọi import kiểu dữ liệu dùng `import type` để tránh đưa mã không cần thiết vào bundle.
+
+**Luồng phân tích hiện tại:**
+
+1. `entrypoints/content.ts` khởi tạo selection controller và chọn adapter theo URL.
+2. Nút nổi hoặc nút Reddit gửi `ANALYZE_REQUEST` qua `chrome.runtime.sendMessage`.
+3. `entrypoints/background.ts` kiểm tra hợp đồng message rồi chuyển cho `handle-analysis.ts`.
+4. Handler mở side panel, ghi `loading`, gọi `analysis-api.ts`; HTTP client gửi `POST /api/v1/analyze` với timeout 60 giây.
+5. `map-response.ts` đổi verdict và confidence của backend sang dữ liệu UI; handler ghi `success` hoặc `error`.
+6. Side panel đọc và theo dõi `tabState_<tabId>` trong `chrome.storage.session`; controller chuyển trạng thái cho renderer.
+
+`chrome.storage.session` hiện giữ trạng thái giao diện theo tab; **chưa có cache kết quả**. Không dùng biến toàn cục của service worker làm nơi lưu trạng thái cần giữ giữa các lần worker chạy.
+
+**Mở rộng:**
+
+- Thêm mạng xã hội: tạo adapter implement `PlatformAdapter` trong `features/analysis/content/adapters/`, đăng ký trong `index.ts` và cập nhật matches/host permissions ở Vite.
+- Thêm tóm tắt bài báo: tạo `features/article-summary/` với `types.ts`, `content/`, `background/`, `sidepanel/`; thêm hợp đồng message và nối tại các entrypoint. Xử lý AI vẫn nằm ở backend.
+- Thêm cache: tạo adapter `infrastructure/cache/` khi triển khai, để từng tính năng tự quyết định khóa, TTL và điều kiện bỏ qua cache. Tách cache kết quả khỏi trạng thái UI theo tab.
+- Thêm service AI/search bên ngoài: triển khai ở backend; extension chỉ thêm API client hoặc mapper của tính năng khi hợp đồng backend thay đổi.
+
+Chi tiết phát triển, debug và kiểm tra thủ công: [`extension/README.md`](extension/README.md).
 
 ### 2.2. Backend API (Server)
 - **Framework:** Python + FastAPI
@@ -148,7 +194,7 @@ Mô hình: **Client-Server**, trong đó Client là Chrome Extension (Manifest V
 
 ## 5. Giới hạn/nợ kỹ thuật đã biết (bản demo)
 - Chưa có database → không lưu lịch sử, không cache → mỗi lần phân tích đều tốn API call thật (cân nhắc thêm cache ở bản sau để tiết kiệm chi phí).
-- Chỉ hỗ trợ Facebook, DOM selector có thể hỏng khi Facebook đổi giao diện → cần thiết kế adapter dễ sửa (mục 2.1).
+- Hỗ trợ Facebook và Reddit; DOM selector có thể hỏng khi nền tảng đổi giao diện → cần thiết kế adapter dễ sửa (mục 2.1).
 - Static API key giữa extension–backend chưa đủ an toàn cho production.
 - Google Fact Check Tools API có độ phủ dữ liệu tiếng Việt còn hạn chế, có thể thường xuyên trả về trạng thái rỗng ("empty") khi truy vấn nội dung tiếng Việt.
 

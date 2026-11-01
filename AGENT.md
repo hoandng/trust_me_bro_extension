@@ -7,7 +7,7 @@
 - **Tên dự án:** Trust Me Bro - Extension kiểm chứng tin tức mạng xã hội
 - **Mục tiêu:** Giúp người dùng kiểm tra nhanh độ tin cậy của một đoạn nội dung trên mạng xã hội, có trích dẫn nguồn, ngay tại chỗ (không cần rời khỏi trang).
 - **Đối tượng người dùng:** Người dùng mạng xã hội phổ thông, muốn kiểm chứng tin tức/claim trước khi tin hoặc chia sẻ.
-- **Trạng thái hiện tại:** MVP — demo trên Facebook.
+- **Trạng thái hiện tại:** MVP — adapter Facebook và Reddit.
 
 ## 2. Tech stack
 
@@ -20,19 +20,22 @@
 
 ## 3. Cấu trúc thư mục
 
-```
+```text
 /extension
-  /content-script     # inject vào Facebook, bắt sự kiện bôi đen
-  /background          # service worker, gọi backend
-  /sidepanel            # UI hiển thị kết quả
-  /shared               # types, constants dùng chung
+  /src
+    /entrypoints        # khởi tạo background, content, side panel
+    /features/analysis  # tính năng kiểm chứng: background, content/adapters, sidepanel
+    /infrastructure     # HTTP client và adapter Chrome Storage
+    /shared             # hợp đồng message và cấu hình dùng chung
+  /tests                # module tests, mock Chrome và backend
+  /public/icons
 /backend
   /app
     /api/v1             # routes
     /core               # config, security, logging
     /services           # từng API bên ngoài: factcheck, gemini, tavily
-    /orchestrator        # tổng hợp kết quả
-    /schemas             # request/response models
+    /orchestrator       # tổng hợp kết quả
+    /schemas            # request/response models
   /tests
 ```
 
@@ -44,6 +47,9 @@
 - **Comment:** Tiếng Việt cho comment giải thích nghiệp vụ, English cho tên biến/hàm/class
 - **Không tự ý thêm dependency mới** nếu chưa xác nhận với người dùng — đặc biệt tránh thêm thư viện nặng không cần thiết cho 1 extension nhỏ
 - **Không refactor ngoài phạm vi task** được giao
+- **Extension:** dùng module theo tính năng; entrypoint chỉ khởi tạo/đăng ký listener. Không import entrypoint từ tính năng hoặc hạ tầng. Module content không import background/HTTP client; module background không import DOM/UI.
+- **TypeScript:** dùng `import type` cho kiểu dữ liệu. Logic của tính năng mới đặt trong `src/features/<tên>/`; chỉ đưa adapter kỹ thuật dùng chung vào `src/infrastructure/`.
+- **Hợp đồng:** cập nhật `src/shared/messages.ts` khi thêm message, giữ kiểu dữ liệu của tính năng trong `types.ts`. `SIDEPANEL_PATH` trong `src/shared/config.ts` là đường dẫn chung cho manifest và background.
 - **Mỗi service trong `services/` phải implement chung interface** (`base_service.py`) — không viết logic gọi API trực tiếp trong orchestrator hoặc trong route
 - **Extension tuyệt đối không chứa API key của Gemini/Tavily/Fact Check** — mọi lời gọi 3 API này chỉ được thực hiện từ backend
 
@@ -58,7 +64,7 @@
 ## 6. Testing & Quality Gates
 
 - **Backend:** `pytest`, mock các API bên ngoài (Fact Check/Gemini/Tavily) khi test — không gọi API thật trong test tự động
-- **Extension:** test thủ công trên Chrome (demo giai đoạn này), e2e backend có `test_e2e.py`
+- **Extension:** `npm test` kiểm tra hợp đồng message, mapping response, trạng thái theo tab và luồng API với mock; chạy thêm `npm run typecheck`, `npm run lint`, `npm run build`. Kiểm tra thủ công trên Chrome theo `extension/README.md`. E2E backend có `test_e2e.py`.
 - **Pre-commit / CI:** Dự án sử dụng `pre-commit` framework (ruff, pytest nhanh, eslint, tsc --noEmit, gitleaks). Mọi PR đều được check bởi GitHub Actions `ci.yml`.
 
 Lệnh chạy test backend:

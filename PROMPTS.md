@@ -1,5 +1,7 @@
 # PROMPTS.md — Kế hoạch đầu việc & prompt cho AI
 
+> Các task scaffold/mock bên dưới mô tả các giai đoạn phát triển. Khi sửa extension hiện tại, dùng cấu trúc module theo tính năng trong `ARCHITECTURE.md` §2.1 và `extension/README.md`; không tạo lại các thư mục source cũ. Cache và tóm tắt bài báo là tính năng dự kiến, chưa triển khai.
+
 > Cách dùng: làm **tuần tự** từ T0 → T15. Mỗi task = 1 phiên chat mới với AI + 1 commit khi chạy được.
 > Mỗi prompt đã gồm: bối cảnh, yêu cầu, tiêu chí hoàn thành, điều không được làm.
 
@@ -100,9 +102,11 @@ Yêu cầu:
   + host_permissions chỉ: https://*.facebook.com/* và URL backend (đọc từ biến build)
   + content_scripts match: https://*.facebook.com/*
   + background service worker, side_panel default_path
-- Cấu trúc: content-script/, background/, sidepanel/, shared/ (theo ARCHITECTURE.md 2.1).
-- shared/types.ts: định nghĩa AnalyzeRequest/AnalyzeResponse khớp hợp đồng dữ liệu,
-  và các kiểu message giữa content script ↔ background ↔ side panel.
+- Cấu trúc hiện tại: src/entrypoints/, src/features/analysis/, src/infrastructure/, src/shared/
+  (theo ARCHITECTURE.md 2.1). Entrypoint chỉ khởi tạo và đăng ký listener.
+- features/analysis/types.ts: định nghĩa request, response, trạng thái theo tab.
+- shared/messages.ts: hợp đồng message giữa content script ↔ background ↔ side panel;
+  dùng import type cho dữ liệu của tính năng.
 - Mỗi phần chỉ cần "hello world": content script log ra console, side panel hiện chữ tĩnh.
 - Script: npm run dev (watch), npm run build (ra dist/), npm run lint, npm run typecheck.
 - ESLint + Prettier.
@@ -128,7 +132,7 @@ Commit: `feat(extension): scaffold MV3 + build pipeline`
 [TASK T3] Content script bắt sự kiện bôi đen và hiển thị nút nổi.
 
 Yêu cầu:
-- Định nghĩa interface PlatformAdapter trong shared/ hoặc content-script/adapters/:
+- Định nghĩa interface PlatformAdapter trong src/features/analysis/content/adapters/platform-adapter.ts:
   { id: string; matches(url: URL): boolean; getSelectionInfo(): SelectionInfo | null }
   với SelectionInfo = { text: string; rect: DOMRect }.
 - Viết facebook-adapter.ts implement interface đó.
@@ -141,7 +145,7 @@ Yêu cầu:
 - Bấm nút → gửi message { type: "ANALYZE_REQUEST", payload: {text, platform:"facebook", page_url} }
   tới background bằng chrome.runtime.sendMessage (background chưa xử lý cũng được, log ra).
 - Text trong selection KHÔNG được lưu ở đâu hay log ra console trong bản build production.
-- Có registry adapter đơn giản: chọn adapter theo URL (để sau thêm x/reddit).
+- Có registry adapter đơn giản: chọn adapter theo URL trong features/analysis/content/adapters/index.ts.
 
 Tiêu chí hoàn thành:
 - Bôi đen đoạn văn trong bài post → nút hiện đúng vị trí, không vỡ layout Facebook.
@@ -174,7 +178,7 @@ Yêu cầu:
   success (verdict badge, thanh confidence, explanation, danh sách nguồn),
   error (thông báo thân thiện + nút "Thử lại").
 - Ở task này background trả DỮ LIỆU MOCK sau 1.5 giây delay để thử UI. Tách mock ra file riêng
-  (shared/mock.ts) để dễ xoá.
+  (features/analysis/background/mock.ts) để dễ xoá; không đưa mock vào infrastructure.
 - UI: tiếng Việt, gọn, hỗ trợ dark/light theo hệ thống. Chọn vanilla TS hoặc Preact
   (giải thích ngắn), bundle phải nhẹ.
 - Link nguồn: target="_blank" rel="noopener noreferrer"; render text bằng textContent

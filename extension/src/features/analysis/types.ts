@@ -1,6 +1,7 @@
-export interface AnalyzeRequest {
-  postId: string;
-  content: string;
+export interface SelectionPayload {
+  text: string;
+  platform: string;
+  page_url: string;
 }
 
 export interface SourceItem {
@@ -28,13 +29,17 @@ export interface TabAnalysisState {
   error?: string;
 }
 
-export interface SelectionPayload {
-  text: string;
-  platform: string;
-  page_url: string;
+export interface BackendAnalysisResponse {
+  verdict: string;
+  confidence_score: number;
+  explanation: string;
+  sources?: Array<{
+    title: string;
+    url: string;
+    publisher_name?: string;
+    publisher?: string;
+    snippet?: string;
+    stance?: string;
+  }>;
+  service_status?: Record<string, string> | string;
 }
-
-export type ExtensionMessage =
-  | { type: 'ANALYZE_POST'; payload: AnalyzeRequest }
-  | { type: 'ANALYZE_RESULT'; payload: AnalyzeResponse }
-  | { type: 'ANALYZE_REQUEST'; payload: SelectionPayload; tabId?: number };

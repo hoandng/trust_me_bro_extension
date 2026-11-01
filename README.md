@@ -1,10 +1,10 @@
 # Trust Me Bro Extension
 
-Dự án này là một **Browser Extension (Trình mở rộng trình duyệt)** hỗ trợ kiểm tra độ tin cậy của nội dung trên mạng xã hội. Extension cho phép người dùng chọn một đoạn văn bản trên Facebook và nhận được phân tích, đánh giá, kèm theo các nguồn tham khảo liên quan về tính xác thực của thông tin đó.
+Dự án này là một **Browser Extension (Trình mở rộng trình duyệt)** hỗ trợ kiểm tra độ tin cậy của nội dung trên mạng xã hội. Extension cho phép người dùng chọn một đoạn văn bản trên Facebook hoặc Reddit và nhận được phân tích, đánh giá, kèm theo các nguồn tham khảo liên quan về tính xác thực của thông tin đó.
 
 ## 🌟 Tính năng (Features)
 
-- **Phân tích bôi đen**: Bôi đen một đoạn văn bản trên Facebook, một nút "Phân tích" sẽ hiện ra.
+- **Phân tích bôi đen**: Bôi đen một đoạn văn bản trên Facebook hoặc Reddit, một nút "Phân tích" sẽ hiện ra.
 - **Orchestrator Backend**: Một backend mạnh mẽ viết bằng FastAPI đóng vai trò điều phối nhiều nguồn xác thực:
   - **Gemini API**: Phân tích, tổng hợp thông tin, sinh ra kết luận cuối cùng (Verdict) với điểm số tin cậy (Confidence score).
   - **Google Fact Check Tools API**: Tìm kiếm những tuyên bố (claims) đã được xác minh trước đó bởi các tổ chức uy tín.
@@ -17,9 +17,11 @@ Dự án này là một **Browser Extension (Trình mở rộng trình duyệt)*
 Dự án chia làm 2 phần chính (Client-Server):
 
 1. **Extension (Frontend / Client)**
-   - Viết bằng TypeScript / React / Vite.
+   - Viết bằng TypeScript strict, HTML/CSS và DOM thuần; build bằng Vite.
    - Thư mục: `extension/`
-   - Nhiệm vụ: Bắt sự kiện trên Facebook (content-script), truyền dữ liệu về background (service-worker) và hiển thị kết quả (side-panel).
+   - Tổ chức theo tính năng: `src/entrypoints/` khởi tạo các điểm chạy Manifest V3; `src/features/analysis/` chứa tính năng kiểm chứng; `src/infrastructure/` chứa HTTP/Storage; `src/shared/` chứa hợp đồng message và cấu hình.
+   - Hướng dẫn tổ chức file, thêm tính năng và debug: [extension/README.md](extension/README.md).
+   - Nhiệm vụ: Bắt sự kiện trên Facebook/Reddit (content script), truyền dữ liệu về background (service-worker) và hiển thị kết quả (side-panel).
 2. **Backend API (Server)**
    - Viết bằng Python (FastAPI).
    - Thư mục: `backend/`

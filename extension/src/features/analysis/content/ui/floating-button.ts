@@ -1,4 +1,4 @@
-import { ExtensionMessage } from '../../shared/types';
+import type { ExtensionMessage } from '../../../../shared/messages';
 
 export class FloatingButton {
   private container: HTMLDivElement | null = null;
@@ -65,7 +65,7 @@ export class FloatingButton {
 
     // Positioning slightly above the selection
     this.container.style.top = `${window.scrollY + rect.top - 40}px`;
-    this.container.style.left = `${window.scrollX + rect.left + (rect.width / 2) - 45}px`;
+    this.container.style.left = `${window.scrollX + rect.left + rect.width / 2 - 45}px`;
     this.container.style.display = 'block';
   }
 
@@ -85,8 +85,8 @@ export class FloatingButton {
       payload: {
         text: this.selectedText,
         platform: this.platformId,
-        page_url: window.location.href
-      }
+        page_url: window.location.href,
+      },
     };
 
     chrome.runtime.sendMessage(message).catch(() => {

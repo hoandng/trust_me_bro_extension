@@ -1,4 +1,4 @@
-import { TabAnalysisState, AnalyzeResponse } from '../shared/types';
+import type { TabAnalysisState, AnalyzeResponse } from '../types';
 
 // DOM Elements
 const stateIdle = document.getElementById('state-idle') as HTMLDivElement;
@@ -29,77 +29,7 @@ const errorMessage = document.getElementById('error-message') as HTMLParagraphEl
 const btnRetry = document.getElementById('btn-retry') as HTMLButtonElement;
 const btnCopy = document.getElementById('btn-copy') as HTMLButtonElement;
 
-let currentTabId: number | null = null;
 let loadingInterval: number | null = null;
-
-async function init() {
-  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tabs.length > 0 && tabs[0].id) {
-    currentTabId = tabs[0].id;
-    await loadState(currentTabId);
-    
-    // Clear badge when side panel is opened
-    chrome.action.setBadgeText({ text: '', tabId: currentTabId }).catch(() => {});
-  }
-
-  // Listen for state changes
-  chrome.storage.session.onChanged.addListener((changes) => {
-    if (currentTabId && changes[`tabState_${currentTabId}`]) {
-      renderState(changes[`tabState_${currentTabId}`].newValue as TabAnalysisState);
-    }
-  });
-
-  // Handle active tab change
-  chrome.tabs.onActivated.addListener(async (activeInfo) => {
-    currentTabId = activeInfo.tabId;
-    await loadState(currentTabId);
-  });
-
-  // Handle tab update
-  chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
-    if (tabId === currentTabId && changeInfo.status === 'loading') {
-      await loadState(currentTabId);
-    }
-  });
-
-  // Setup event listeners
-  btnReadMore.addEventListener('click', () => {
-    const isExpanded = successTextPreview.classList.toggle('expanded');
-    btnReadMore.textContent = isExpanded ? 'Thu gọn' : 'Xem thêm';
-    btnReadMore.setAttribute('aria-expanded', isExpanded.toString());
-  });
-
-  btnCopy.addEventListener('click', handleCopyResult);
-
-  btnRetry.addEventListener('click', async () => {
-    if (currentTabId) {
-      const key = `tabState_${currentTabId}`;
-      const data = await chrome.storage.session.get(key);
-      const state = data[key] as TabAnalysisState | undefined;
-      
-      if (state && state.request) {
-        chrome.runtime.sendMessage({
-          type: 'ANALYZE_REQUEST',
-          payload: state.request,
-          tabId: currentTabId
-        });
-      } else {
-        chrome.storage.session.set({ [key]: { status: 'idle' } });
-      }
-    }
-  });
-}
-
-async function loadState(tabId: number) {
-  const key = `tabState_${tabId}`;
-  const data = await chrome.storage.session.get(key);
-  const state = data[key] as TabAnalysisState | undefined;
-  if (state) {
-    renderState(state);
-  } else {
-    renderState({ status: 'idle' });
-  }
-}
 
 function hideAllStates() {
   stateIdle.classList.add('hidden');
@@ -112,15 +42,15 @@ function hideAllStates() {
 const LOADING_STEPS = [
   'Đang tách ý chính...',
   'Đang tìm kiếm nguồn đối chứng...',
-  'Đang đánh giá độ tin cậy...'
+  'Đang đánh giá độ tin cậy...',
 ];
 
 function startLoadingAnimation() {
   let stepIndex = 0;
   loadingStepText.textContent = LOADING_STEPS[0];
-  
+
   if (loadingInterval) clearInterval(loadingInterval);
-  
+
   loadingInterval = window.setInterval(() => {
     stepIndex = (stepIndex + 1) % LOADING_STEPS.length;
     loadingStepText.textContent = LOADING_STEPS[stepIndex];
@@ -134,14 +64,14 @@ function stopLoadingAnimation() {
   }
 }
 
-function renderState(state: TabAnalysisState) {
+export function renderAnalysisState(state: TabAnalysisState) {
   hideAllStates();
 
   switch (state.status) {
     case 'idle':
       stateIdle.classList.remove('hidden');
       break;
-    
+
     case 'loading':
       stateLoading.classList.remove('hidden');
       if (state.request?.text) {
@@ -172,7 +102,7 @@ function setupTextPreview(text: string) {
   successTextPreview.classList.remove('expanded');
   btnReadMore.textContent = 'Xem thêm';
   btnReadMore.setAttribute('aria-expanded', 'false');
-  
+
   // Need to check if text needs truncation (approximate logic since scrollHeight is tricky before render)
   if (text.length > 150) {
     btnReadMore.classList.remove('hidden');
@@ -183,10 +113,14 @@ function setupTextPreview(text: string) {
 
 function getVerdictInfo(verdict: string) {
   switch (verdict) {
-    case 'Thật': return { class: 'verdict-True', icon: '✅', text: 'Đáng tin cậy' };
-    case 'Giả': return { class: 'verdict-False', icon: '❌', text: 'Sai sự thật' };
-    case 'Thiếu ngữ cảnh': return { class: 'verdict-Mixed', icon: '⚠️', text: 'Thiếu ngữ cảnh' };
-    default: return { class: 'verdict-Unverified', icon: '❓', text: 'Chưa thể xác minh' };
+    case 'Thật':
+      return { class: 'verdict-True', icon: '✅', text: 'Đáng tin cậy' };
+    case 'Giả':
+      return { class: 'verdict-False', icon: '❌', text: 'Sai sự thật' };
+    case 'Thiếu ngữ cảnh':
+      return { class: 'verdict-Mixed', icon: '⚠️', text: 'Thiếu ngữ cảnh' };
+    default:
+      return { class: 'verdict-Unverified', icon: '❓', text: 'Chưa thể xác minh' };
   }
 }
 
@@ -215,7 +149,7 @@ function renderSuccess(response: AnalyzeResponse) {
   // Sources
   resultSources.textContent = ''; // Clear existing
   if (response.sources && response.sources.length > 0) {
-    response.sources.forEach(source => {
+    response.sources.forEach((source) => {
       const li = document.createElement('li');
       li.className = 'source-item';
 
@@ -231,12 +165,17 @@ function renderSuccess(response: AnalyzeResponse) {
       if (source.stance) {
         const stanceBadge = document.createElement('span');
         const sType = source.stance.toLowerCase();
-        
+
         let stanceClass = 'stance-neutral';
         let stanceText = 'Trung lập';
-        if (sType.includes('support')) { stanceClass = 'stance-support'; stanceText = 'Ủng hộ'; }
-        else if (sType.includes('refute')) { stanceClass = 'stance-refute'; stanceText = 'Bác bỏ'; }
-        
+        if (sType.includes('support')) {
+          stanceClass = 'stance-support';
+          stanceText = 'Ủng hộ';
+        } else if (sType.includes('refute')) {
+          stanceClass = 'stance-refute';
+          stanceText = 'Bác bỏ';
+        }
+
         stanceBadge.className = `stance-badge ${stanceClass}`;
         stanceBadge.textContent = stanceText;
         header.appendChild(stanceBadge);
@@ -275,9 +214,9 @@ async function handleCopyResult() {
     const verdict = verdictText.textContent || '';
     const confidence = resultConfidenceText.textContent || '';
     const explanation = resultExplanation.textContent || '';
-    
+
     let text = `[TrustMeBro] Kết quả kiểm chứng:\n- Kết luận: ${verdict} (${confidence})\n- Giải thích: ${explanation}\n\nNguồn tham khảo:\n`;
-    
+
     const sourceItems = resultSources.querySelectorAll('.source-item');
     if (sourceItems.length > 0) {
       sourceItems.forEach((item, index) => {
@@ -291,7 +230,7 @@ async function handleCopyResult() {
     text += '\n*Lưu ý: Kết quả do AI tổng hợp, chỉ mang tính tham khảo.*';
 
     await navigator.clipboard.writeText(text);
-    
+
     const originalText = btnCopy.textContent;
     btnCopy.textContent = '✅ Đã sao chép';
     setTimeout(() => {
@@ -302,4 +241,13 @@ async function handleCopyResult() {
   }
 }
 
-init().catch(console.error);
+export function bindAnalysisView(onRetry: () => void) {
+  btnReadMore.addEventListener('click', () => {
+    const isExpanded = successTextPreview.classList.toggle('expanded');
+    btnReadMore.textContent = isExpanded ? 'Thu gọn' : 'Xem thêm';
+    btnReadMore.setAttribute('aria-expanded', isExpanded.toString());
+  });
+  btnCopy.addEventListener('click', handleCopyResult);
+  btnRetry.addEventListener('click', onRetry);
+  window.addEventListener('pagehide', stopLoadingAnimation);
+}

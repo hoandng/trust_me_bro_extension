@@ -5,8 +5,8 @@
 ## Trạng thái hiện tại
 
 - **Phiên bản:** v0.1 (demo)
-- **Giai đoạn:** MVP — chỉ hỗ trợ Facebook
-- **Cập nhật lần cuối:** 2026-09-27
+- **Giai đoạn:** MVP — có adapter Facebook và Reddit
+- **Cập nhật lần cuối:** 2026-11-01
 
 ## Mục tiêu tổng thể
 
@@ -32,6 +32,8 @@ Mục tiêu: chứng minh luồng hoạt động end-to-end.
 
 Mục tiêu: extension dùng được mượt mà, xử lý lỗi tốt, sẵn sàng cho nhóm nhỏ dùng thử.
 
+- [x] Tổ chức extension theo tính năng: entrypoints, features/analysis, infrastructure, shared
+- [x] Tách HTTP client, mapper response, trạng thái theo tab, controller và renderer; thêm module tests với mock
 - [x] Xử lý trạng thái loading/error rõ ràng trong side panel
 - [x] Rate limiting phía backend (tránh spam/tốn quota API trả phí)
 - [x] Retry/fallback khi 1 trong 3 API bên ngoài lỗi hoặc timeout (không để cả response fail vì 1 service hỏng)
@@ -43,14 +45,15 @@ Mục tiêu: extension dùng được mượt mà, xử lý lỗi tốt, sẵn s
 
 - [ ] Chèn nút phân tích trực tiếp vào từng bài post (không cần bôi đen thủ công)
 - [ ] Chế độ click vào bài post → tự động phân tích toàn bộ nội dung post đó
-- [ ] Cache kết quả phân tích (theo hash nội dung) để tránh gọi lại API cho cùng 1 đoạn text — cần thêm database/cache layer (Redis hoặc DB nhẹ)
+- [ ] Cache kết quả phân tích theo hash nội dung: thêm `extension/src/infrastructure/cache/`, TTL và policy của từng tính năng; có thể bổ sung Redis ở backend khi cần cache dùng chung
+- [ ] Tóm tắt bài báo: thêm `features/article-summary/`, hợp đồng message và endpoint backend tương ứng
 - [ ] Lưu lịch sử phân tích cho người dùng (tuỳ chọn, cần thiết kế lại phần bảo mật/lưu trữ dữ liệu)
 
 ## Milestone 4: Mở rộng đa nền tảng
 
 - [ ] Viết adapter cho X (Twitter)
-- [ ] Viết adapter cho Reddit
-- [ ] Chuẩn hoá interface adapter để thêm nền tảng mới nhanh hơn
+- [x] Viết adapter cho Reddit và chèn nút kiểm chứng trong trang chi tiết bài viết
+- [x] Có interface `PlatformAdapter` và registry trong `features/analysis/content/adapters/`
 - [ ] Đánh giá thêm API/nguồn dữ liệu kiểm chứng khác (ngoài Fact Check/Gemini/Tavily) để tăng độ chính xác
 
 ## Milestone 5: Production-ready

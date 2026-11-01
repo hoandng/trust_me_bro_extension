@@ -11,9 +11,9 @@
 - ✅ Thêm cơ chế "kill switch" và ngân sách: Sử dụng biến `DAILY_ANALYZE_LIMIT_GLOBAL` qua RateLimiter để chặn khi tổng số lượt call API/ngày trên toàn hệ thống vượt ngưỡng (bảo vệ hóa đơn Gemini/Tavily).
 
 ## Extension
-- ✅ Rà soát manifest: Đã loại bỏ quyền nguy hiểm `<all_urls>` và thay bằng origin chính xác `['https://*.facebook.com/*']` trong mảng `web_accessible_resources` cũng như host permissions.
+- ✅ Rà soát manifest: Đã loại bỏ quyền nguy hiểm `<all_urls>` và thay bằng các origin Facebook, Reddit và backend trong `extension/vite.config.ts` trong mảng `web_accessible_resources` cũng như host permissions.
 - ✅ Kiểm tra không có API key của Gemini/Tavily/FactCheck trong bundle: Đã rà soát thư mục `dist/` - KHÔNG có bất kỳ key nào của LLM hoặc Search API bị rò rỉ ra front-end.
-- ✅ Đảm bảo không dùng innerHTML/eval với dữ liệu ngoài: Đã thay thế dòng gán `innerHTML` duy nhất trong `index.ts` thành `textContent` để triệt tiêu mọi khả năng XSS.
+- ✅ Đảm bảo không dùng innerHTML/eval với dữ liệu ngoài: Renderer tại `src/features/analysis/sidepanel/render.ts` dùng `textContent` để triệt tiêu mọi khả năng XSS.
 - ✅ Thêm Content Security Policy (CSP): Đã thiết lập Content Security Policy cực kì khắt khe cho UI của extension: `script-src 'self'; object-src 'self';` ở trong `manifest.json`.
 
 ## Rủi ro còn lại (Known Risks & Vulnerabilities)

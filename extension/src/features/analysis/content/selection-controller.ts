@@ -4,7 +4,7 @@ import { FloatingButton } from './ui/floating-button';
 let floatingButton: FloatingButton | null = null;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-function init() {
+export function initSelectionController() {
   const currentUrl = new URL(window.location.href);
   const adapter = getAdapterForUrl(currentUrl);
 
@@ -30,21 +30,7 @@ function init() {
     }, 150);
   };
 
-  const handleHideEvents = (e: Event) => {
-    // If it's a click, and the target is inside our shadow DOM, ignore
-    // Note: since our shadow mode is closed, e.target will be the host element.
-    if (e.type === 'keydown' && (e as KeyboardEvent).key !== 'Escape') {
-      return;
-    }
-    
-    if (e.type === 'mousedown') {
-      // If we clicked inside the shadow dom host, don't hide
-      // But we can't easily check closed shadow dom, so we rely on mouseup/selectionchange to re-show if needed,
-      // or we just let it hide and if selection is still there, mouseup will trigger again.
-      // Wait, we should not hide if the selection is active inside our button. But our button is just a button.
-      // If the user clicks the button, the click event on the button stops propagation.
-    }
-    
+  const handleHideEvents = () => {
     if (floatingButton) {
       floatingButton.hide();
     }
@@ -54,7 +40,7 @@ function init() {
   document.addEventListener('mouseup', handleSelection);
   document.addEventListener('keyup', (e) => {
     if (e.key === 'Escape') {
-      handleHideEvents(e);
+      handleHideEvents();
     } else {
       handleSelection();
     }
@@ -63,6 +49,3 @@ function init() {
   document.addEventListener('mousedown', handleHideEvents);
   document.addEventListener('scroll', handleHideEvents, { passive: true });
 }
-
-// Initialize
-init();

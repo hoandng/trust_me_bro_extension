@@ -1,4 +1,4 @@
-﻿import { PlatformAdapter, SelectionInfo } from './platform-adapter';
+import type { PlatformAdapter, SelectionInfo } from './platform-adapter';
 
 export class FacebookAdapter implements PlatformAdapter {
   id = 'facebook';
@@ -18,7 +18,7 @@ export class FacebookAdapter implements PlatformAdapter {
 
     const range = selection.getRangeAt(0);
     const rect = range.getBoundingClientRect();
-    
+
     // Validate rect
     if (rect.width === 0 || rect.height === 0) return null;
 

@@ -1,10 +1,10 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="vi">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>TrustMeBro</title>
-    <link rel="stylesheet" href="./index.css" />
+    <link rel="stylesheet" href="../../features/analysis/sidepanel/index.css" />
   </head>
   <body>
     <h1>
@@ -13,7 +13,9 @@
     </h1>
 
     <div id="state-idle" class="state-container">
-      <p>Vui lòng bôi đen một đoạn văn bản trên trang web và chọn biểu tượng TrustMeBro để phân tích.</p>
+      <p>
+        Vui lòng bôi đen một đoạn văn bản trên trang web và chọn biểu tượng TrustMeBro để phân tích.
+      </p>
     </div>
 
     <div id="state-loading" class="state-container hidden">
@@ -48,13 +50,20 @@
           <span id="verdict-text"></span>
         </div>
       </div>
-      
+
       <div>
         <div class="confidence-header">
           <label id="confidence-label">Độ tin cậy của AI:</label>
           <span id="result-confidence-text" aria-labelledby="confidence-label"></span>
         </div>
-        <div class="confidence-bar-container" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" id="confidence-progress">
+        <div
+          class="confidence-bar-container"
+          role="progressbar"
+          aria-valuenow="0"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          id="confidence-progress"
+        >
           <div id="result-confidence-bar" class="confidence-bar" style="width: 0%"></div>
         </div>
       </div>
@@ -70,11 +79,18 @@
       </div>
 
       <div class="disclaimer">
-        <small><i>Lưu ý: Kết quả do AI tổng hợp, chỉ mang tính tham khảo. Hãy tự đối chiếu với các nguồn uy tín.</i></small>
+        <small
+          ><i
+            >Lưu ý: Kết quả do AI tổng hợp, chỉ mang tính tham khảo. Hãy tự đối chiếu với các nguồn
+            uy tín.</i
+          ></small
+        >
       </div>
 
       <div class="actions">
-        <button id="btn-copy" class="btn-secondary" title="Sao chép kết quả">📋 Sao chép kết quả</button>
+        <button id="btn-copy" class="btn-secondary" title="Sao chép kết quả">
+          📋 Sao chép kết quả
+        </button>
       </div>
     </div>
 

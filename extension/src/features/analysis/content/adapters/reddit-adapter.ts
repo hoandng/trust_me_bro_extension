@@ -1,5 +1,5 @@
-import { ExtensionMessage } from '../../shared/types';
-import { PlatformAdapter, SelectionInfo } from './platform-adapter';
+import type { ExtensionMessage } from '../../../../shared/messages';
+import type { PlatformAdapter, SelectionInfo } from './platform-adapter';
 
 export class RedditAdapter implements PlatformAdapter {
   id = 'reddit';
@@ -29,7 +29,7 @@ export class RedditAdapter implements PlatformAdapter {
     const observerOptions: IntersectionObserverInit = {
       root: null,
       rootMargin: '0px',
-      threshold: 0.1
+      threshold: 0.1,
     };
 
     const postObserver = new IntersectionObserver((entries) => {
@@ -222,10 +222,7 @@ export class RedditAdapter implements PlatformAdapter {
         textToAnalyze = textToAnalyze.slice(0, 2000);
       }
 
-      console.log('====================================');
-      console.log('🟢 NỘI DUNG (TITLE + BODY):\n', fullContent);
-      console.log('🔗 LINK BÁO:\n', articleUrl || 'Không có');
-      console.log('====================================');
+      console.debug('[Reddit] Analysis requested', { textLength: textToAnalyze.length });
 
       postElement.style.border = '2px solid #27ae60';
 
@@ -234,8 +231,8 @@ export class RedditAdapter implements PlatformAdapter {
         payload: {
           text: textToAnalyze,
           platform: this.id,
-          page_url: window.location.href
-        }
+          page_url: window.location.href,
+        },
       };
 
       chrome.runtime.sendMessage(message).catch((err) => {
