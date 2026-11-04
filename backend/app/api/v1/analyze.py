@@ -5,11 +5,13 @@
 # pyright: reportMissingImports=false
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from app.core.config import settings
+from app.services.gemini_model_pool import GeminiQuotaExhausted
 
 from app.schemas.request import AnalyzeRequest
 from app.schemas.response import AnalyzeResponse, ServiceStatus, Source
-from app.api.deps import verify_api_key, get_orchestrator
+from app.api.deps import verify_api_key, authenticate_api_key, get_orchestrator
 from app.orchestrator.analysis_orchestrator import AnalysisOrchestrator
 from app.schemas.internal import AnalysisContext
 
@@ -30,4 +32,19 @@ async def analyze_text(
         lang=request.lang
     )
 
-    return await orchestrator.analyze(ctx)
+    service = getattr(orchestrator, "gemini_service", None)
+    if service is not None:
+        service.select_model(request.model_id)
+    try:
+        response = await orchestrator.analyze(ctx)
+    except GeminiQuotaExhausted as error:
+        raise HTTPException(status_code=503, detail=str(error),
+                            headers={"Retry-After": str(error.retry_after)}) from error
+    if service is not None:
+        response.model_usage = service.model_usage
+    return response
+
+
+@router.get("/models")
+async def list_models(api_key: str = Depends(authenticate_api_key)):
+    return {"default_model": settings.gemini_model, "models": settings.available_gemini_models}

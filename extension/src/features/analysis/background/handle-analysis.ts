@@ -1,6 +1,7 @@
 import type { AnalyzeRequestMessage } from '../../../shared/messages';
 import { SIDEPANEL_PATH } from '../../../shared/config';
 import { analyzeSelection } from './analysis-api';
+import { getPreferredModel } from '../model-preference';
 import { setTabState } from '../state-store';
 
 export async function handleAnalysisRequest(
@@ -24,14 +25,20 @@ export async function handleAnalysisRequest(
     textLength: message.payload.text.length,
   });
 
-  await setTabState(tabId, { status: 'loading', request: message.payload });
+  // Snapshot the preference once; changing the selector does not alter an active request.
+  let payload = message.payload;
   try {
-    const response = await analyzeSelection(message.payload);
-    await setTabState(tabId, { status: 'success', request: message.payload, response });
+    const model = await getPreferredModel();
+    payload = { ...message.payload };
+    delete payload.model_id;
+    if (model) payload.model_id = model;
+    await setTabState(tabId, { status: 'loading', request: payload });
+    const response = await analyzeSelection(payload);
+    await setTabState(tabId, { status: 'success', request: payload, response });
   } catch (error) {
     await setTabState(tabId, {
       status: 'error',
-      request: message.payload,
+      request: payload,
       error: error instanceof Error ? error.message : 'Lỗi không xác định',
     });
   }

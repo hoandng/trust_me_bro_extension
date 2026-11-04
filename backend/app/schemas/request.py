@@ -8,6 +8,15 @@ class AnalyzeRequest(BaseModel):
     platform: Literal["facebook", "x", "reddit"] = Field(..., description="The platform where the text is from")
     page_url: str | None = None
     lang: str | None = None
+    model_id: str | None = Field(default=None, max_length=100)
+
+    @field_validator('model_id')
+    @classmethod
+    def validate_model_id(cls, value: str | None) -> str | None:
+        from app.core.config import settings
+        if value is not None and value not in settings.available_gemini_models:
+            raise ValueError("Model is not enabled")
+        return value
 
     @field_validator('text')
     @classmethod

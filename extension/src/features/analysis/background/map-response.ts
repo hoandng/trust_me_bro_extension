@@ -10,6 +10,7 @@ const verdicts: Record<string, AnalyzeResponse['verdict']> = {
 export function mapAnalysisResponse(data: BackendAnalysisResponse): AnalyzeResponse {
   const status = data.service_status;
   return {
+    model_usage: data.model_usage,
     verdict: verdicts[data.verdict] || 'Không thể kiểm chứng',
     confidence: Math.round(data.confidence_score * 100),
     explanation: data.explanation,

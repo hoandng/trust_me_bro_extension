@@ -12,6 +12,12 @@
       <span>TrustMeBro</span>
     </h1>
 
+    <div class="card model-settings">
+      <label for="model-selector">Model Gemini</label>
+      <select id="model-selector" disabled><option>Đang tải danh sách...</option></select>
+      <p id="model-hint" aria-live="polite"></p>
+    </div>
+
     <div id="state-idle" class="state-container">
       <p>
         Vui lòng bôi đen một đoạn văn bản trên trang web và chọn biểu tượng TrustMeBro để phân tích.
@@ -30,6 +36,7 @@
     </div>
 
     <div id="state-success" class="state-container hidden">
+      <p id="model-usage" class="card" aria-live="polite"></p>
       <!-- Cảnh báo lỗi service -->
       <div id="service-warning" class="warning-badge hidden" role="alert">
         ⚠️ Kết quả có thể chưa đầy đủ do lỗi kết nối nội bộ.

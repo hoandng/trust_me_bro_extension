@@ -125,6 +125,15 @@ function getVerdictInfo(verdict: string) {
 }
 
 function renderSuccess(response: AnalyzeResponse) {
+  const usage = response.model_usage;
+  const modelInfo = document.getElementById('model-usage') as HTMLParagraphElement;
+  modelInfo.classList.toggle('hidden', !usage);
+  if (usage) {
+    const models = [usage.extraction_model && `Trích xuất: ${usage.extraction_model}`,
+      usage.assessment_model && `Đánh giá: ${usage.assessment_model}`].filter(Boolean);
+    modelInfo.textContent = `Ưu tiên: ${usage.requested_model}. ${models.join(' · ')}${
+      usage.fallbacks.length ? '. Đã tự chuyển hoặc bỏ qua model đang chạm hạn mức.' : ''}`;
+  }
   // Service warning
   if (response.service_status && response.service_status !== 'ok') {
     serviceWarning.classList.remove('hidden');

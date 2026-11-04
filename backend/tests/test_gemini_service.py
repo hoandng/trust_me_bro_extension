@@ -107,3 +107,130 @@ async def test_extract_claims_prompt_injection(mock_gemini_client):
     assert "<post>" in call_args.kwargs["input"]
     assert injection_text in call_args.kwargs["input"]
     assert "</post>" in call_args.kwargs["input"]
+
+@pytest.fixture
+def model_ring(monkeypatch):
+    from app.services.gemini_model_pool import GeminiModelPool
+    pool = GeminiModelPool()
+    monkeypatch.setattr('app.services.gemini_service.model_pool', pool)
+    monkeypatch.setattr(settings, 'gemini_model', 'gemini-a')
+    monkeypatch.setattr(settings, 'gemini_models', ['gemini-a', 'gemini-b', 'gemini-c'])
+    return pool
+
+
+def extraction_response():
+    return MagicMock(output_text=json.dumps({
+        'main_claim': 'Claim', 'search_queries': [], 'detected_lang': 'vi', 'is_checkable': True
+    }))
+
+
+@pytest.mark.asyncio
+async def test_quota_rotates_from_selected_model_and_shares_cooldown(mock_gemini_client, model_ring):
+    service = GeminiService()
+    service.select_model('gemini-b')
+    mock_gemini_client.aio.interactions.create = AsyncMock(side_effect=[
+        APIError(429, {'error': {'message': 'Quota exceeded'}}), extraction_response()
+    ])
+    assert await service.extract_claims('A claim') is not None
+    assert [c.kwargs['model'] for c in mock_gemini_client.aio.interactions.create.call_args_list] == ['gemini-b', 'gemini-c']
+    assert service.model_usage.requested_model == 'gemini-b'
+    assert service.model_usage.extraction_model == 'gemini-c'
+    assert model_ring.remaining('gemini-b') > 0
+
+    # A new service (another request) skips the blocked model, but preserves preference.
+    next_service = GeminiService()
+    next_service.select_model('gemini-b')
+    mock_gemini_client.aio.interactions.create = AsyncMock(return_value=extraction_response())
+    await next_service.extract_claims('A claim')
+    assert mock_gemini_client.aio.interactions.create.call_args.kwargs['model'] == 'gemini-c'
+    model_ring.block('gemini-c', 60)
+    mock_gemini_client.aio.interactions.create.reset_mock()
+    await next_service.extract_claims('A claim')
+    assert mock_gemini_client.aio.interactions.create.call_args.kwargs['model'] == 'gemini-a'
+
+
+@pytest.mark.asyncio
+async def test_all_models_exhausted_stops_without_retry_loop(mock_gemini_client, model_ring):
+    from app.services.gemini_model_pool import GeminiQuotaExhausted
+    mock_gemini_client.aio.interactions.create = AsyncMock(side_effect=APIError(429, {}))
+    with pytest.raises(GeminiQuotaExhausted) as error:
+        await GeminiService().extract_claims('A claim')
+    assert error.value.retry_after > 0
+    assert mock_gemini_client.aio.interactions.create.call_count == 3
+    # All cooldowns active: no upstream calls at all.
+    with pytest.raises(GeminiQuotaExhausted):
+        await GeminiService().extract_claims('Another claim')
+    assert mock_gemini_client.aio.interactions.create.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_expired_cooldown_returns_to_preferred_model(mock_gemini_client, model_ring):
+    with patch('app.services.gemini_model_pool.time.monotonic', return_value=100):
+        model_ring.block('gemini-a', 60)
+    with patch('app.services.gemini_model_pool.time.monotonic', return_value=161):
+        mock_gemini_client.aio.interactions.create = AsyncMock(return_value=extraction_response())
+        await GeminiService().extract_claims('A claim')
+    assert mock_gemini_client.aio.interactions.create.call_args.kwargs['model'] == 'gemini-a'
+
+
+@pytest.mark.asyncio
+async def test_non_quota_error_does_not_rotate(mock_gemini_client, model_ring):
+    mock_gemini_client.aio.interactions.create = AsyncMock(side_effect=APIError(403, {}))
+    assert await GeminiService().extract_claims('A claim') is None
+    assert {c.kwargs['model'] for c in mock_gemini_client.aio.interactions.create.call_args_list} == {'gemini-a'}
+    assert model_ring.remaining('gemini-a') == 0
+
+
+@pytest.mark.asyncio
+async def test_assessment_fallback_does_not_repeat_extraction(mock_gemini_client, model_ring):
+    service = GeminiService()
+    assessment = MagicMock(output_text=json.dumps({
+        'verdict': 'unverified', 'confidence_score': 0.1, 'explanation': 'Test', 'source_stances': []
+    }))
+    mock_gemini_client.aio.interactions.create = AsyncMock(side_effect=[
+        extraction_response(), APIError(429, {}), assessment
+    ])
+    await service.extract_claims('A claim')
+    await service.assess('A claim', 'claim', [])
+    assert mock_gemini_client.aio.interactions.create.call_count == 3
+    assert service.model_usage.extraction_model == 'gemini-a'
+    assert service.model_usage.assessment_model == 'gemini-b'
+
+
+def test_quota_cooldown_uses_retry_info_and_daily_reset():
+    from app.services.gemini_model_pool import quota_cooldown
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    error = APIError(429, {'error': {'details': [
+        {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '123.5s'}
+    ]}})
+    assert quota_cooldown(error) == 123.5
+    error = APIError(429, {'error': {'details': [
+        {'@type': 'type.googleapis.com/google.rpc.QuotaFailure', 'violations': [
+            {'quotaId': 'GenerateRequestsPerDayPerProjectPerModel-FreeTier'}
+        ]}
+    ]}})
+    # RPD reset follows Pacific midnight, including DST, rather than server timezone.
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 11, 3, 12, 0, tzinfo=ZoneInfo('America/Los_Angeles'))
+    with patch('app.services.gemini_model_pool.datetime', FixedDatetime):
+        assert quota_cooldown(error) == 12 * 3600
+
+
+@pytest.mark.asyncio
+async def test_interactions_status_code_body_error_rotates(mock_gemini_client, model_ring):
+    # Recent Interactions SDK errors have status_code/body rather than code/details.
+    class InteractionsQuotaError(Exception):
+        status_code = 429
+        body = {'error': {'details': [
+            {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '120s'}
+        ]}}
+    mock_gemini_client.aio.interactions.create = AsyncMock(side_effect=[
+        InteractionsQuotaError(), extraction_response()
+    ])
+    service = GeminiService()
+    assert await service.extract_claims('A claim') is not None
+    assert model_ring.remaining('gemini-a') >= 119
+    assert service.model_usage.extraction_model == 'gemini-b'

@@ -1,14 +1,14 @@
-import json
 import logging
 import time
-from typing import Literal, Any
+from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError
 from google import genai
 from google.genai import types
 
 from app.core.config import settings
-from app.schemas.response import Source
+from app.schemas.response import Source, ModelUsage, ModelFallback
+from app.services.gemini_model_pool import model_pool, quota_cooldown, GeminiQuotaExhausted
 from app.prompts.gemini_prompts import EXTRACT_CLAIMS_PROMPT, ASSESS_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -34,12 +34,46 @@ class GeminiService:
     def __init__(self):
         # We initialize the client if there's an API key
         if settings.gemini_api_key:
-            self.client = genai.Client(api_key=settings.gemini_api_key)
+            self.client = genai.Client(api_key=settings.gemini_api_key, http_options=types.HttpOptions(
+                # Handle quota fallback here instead of retrying a blocked model in the SDK.
+                retry_options=types.HttpRetryOptions(attempts=0), timeout=15000
+            ))
         else:
             self.client = None
             logger.warning("Gemini API key is missing.")
             
-        self.model = settings.gemini_model
+        self.select_model(None)
+
+    def select_model(self, model: str | None):
+        self.model = model or settings.gemini_model
+        if self.model not in settings.available_gemini_models:
+            raise ValueError("Model is not enabled")
+        self.model_usage = ModelUsage(requested_model=self.model)
+
+    async def _create(self, stage: str, **kwargs):
+        models = settings.available_gemini_models
+        start = models.index(self.model)
+        candidates = models[start:] + models[:start]
+        for model in candidates:
+            if model_pool.remaining(model):
+                self.model_usage.fallbacks.append(ModelFallback(stage=stage, model=model))
+                continue
+            try:
+                # Thinking configuration differs between model generations.
+                config = {"thinking_level": "low"} if model.startswith("gemini-3") else {}
+                interaction = await self.client.aio.interactions.create(
+                    model=model, generation_config=config, **kwargs
+                )
+                setattr(self.model_usage, f"{stage}_model", model)
+                return interaction
+            except Exception as error:
+                # Interactions SDK versions use status_code/body; older SDKs use code/details.
+                if getattr(error, 'status_code', getattr(error, 'code', None)) != 429:
+                    raise
+                model_pool.block(model, quota_cooldown(error))
+                self.model_usage.fallbacks.append(ModelFallback(stage=stage, model=model))
+                logger.warning("Gemini quota reached for model %s", model)
+        raise GeminiQuotaExhausted(min(model_pool.remaining(model) or 1 for model in candidates))
 
     async def extract_claims(self, text: str, lang: str | None = None) -> ClaimExtraction | None:
         if not self.client:
@@ -59,12 +93,11 @@ class GeminiService:
         
         for attempt in range(2): # 1 retry
             try:
-                interaction = await self.client.aio.interactions.create(
-                    model=self.model,
+                interaction = await self._create(
+                    "extraction",
                     system_instruction=EXTRACT_CLAIMS_PROMPT,
                     input=prompt,
                     response_format=response_format,
-                    generation_config={"thinking_level": "low"},
                 )
                 
                 raw_output = interaction.output_text
@@ -75,6 +108,8 @@ class GeminiService:
                     logger.info(f"extract_claims done: len={text_len}, time={elapsed}ms, checkable={result.is_checkable}")
                     
                     return result
+            except GeminiQuotaExhausted:
+                raise
             except ValidationError as e:
                 logger.warning(f"Validation error on attempt {attempt + 1}: {e}")
             except Exception as e:
@@ -114,12 +149,11 @@ class GeminiService:
 
         for attempt in range(2):
             try:
-                interaction = await self.client.aio.interactions.create(
-                    model=self.model,
+                interaction = await self._create(
+                    "assessment",
                     system_instruction=ASSESS_PROMPT,
                     input=input_text,
                     response_format=response_format,
-                    generation_config={"thinking_level": "low"},
                 )
 
                 raw_output = interaction.output_text
@@ -134,6 +168,8 @@ class GeminiService:
                     logger.info(f"assess done: text_len={text_len}, time={elapsed}ms, verdict={result.verdict}")
                     
                     return result
+            except GeminiQuotaExhausted:
+                raise
             except ValidationError as e:
                 logger.warning(f"Validation error on attempt {attempt + 1}: {e}")
             except Exception as e:

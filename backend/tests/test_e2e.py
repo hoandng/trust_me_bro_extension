@@ -1,11 +1,12 @@
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 from app.main import app
 from app.api.deps import get_orchestrator
 from app.schemas.internal import ServiceResult
-from app.schemas.response import Source
+from app.schemas.response import Source, ModelUsage
+from app.core.config import settings
 from app.orchestrator.analysis_orchestrator import AnalysisOrchestrator
 from app.services.gemini_service import ClaimExtraction, Assessment
 
@@ -13,6 +14,8 @@ from app.services.gemini_service import ClaimExtraction, Assessment
 @pytest.fixture
 def mock_orchestrator():
     mock_gemini = AsyncMock()
+    mock_gemini.select_model = MagicMock()
+    mock_gemini.model_usage = ModelUsage(requested_model=settings.gemini_model)
     mock_factcheck = AsyncMock()
     mock_tavily = AsyncMock()
 

@@ -1,4 +1,5 @@
 import asyncio
+from app.services.gemini_model_pool import GeminiQuotaExhausted
 from typing import List
 
 from app.schemas.internal import AnalysisContext
@@ -30,6 +31,8 @@ class AnalysisOrchestrator:
                 self.gemini_service.extract_claims(ctx.text, ctx.lang),
                 timeout=20.0
             )
+        except GeminiQuotaExhausted:
+            raise
         except Exception as e:
             status_dict["gemini"] = "error"
             return AnalyzeResponse(
@@ -133,6 +136,8 @@ class AnalysisOrchestrator:
                 self.gemini_service.assess(ctx.text, ctx.claim, sorted_sources),
                 timeout=20.0
             )
+        except GeminiQuotaExhausted:
+            raise
         except Exception:
             status_dict["gemini"] = "error"
             return AnalyzeResponse(

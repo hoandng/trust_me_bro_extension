@@ -11,8 +11,7 @@ from app.core.config import settings
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
-def verify_api_key(request: Request, api_key: str = Security(api_key_header)) -> str:
-    from app.core.rate_limit import limiter
+def authenticate_api_key(api_key: str = Security(api_key_header)) -> str:
 
     if not api_key:
         raise HTTPException(
@@ -32,6 +31,12 @@ def verify_api_key(request: Request, api_key: str = Security(api_key_header)) ->
             detail="Invalid API Key",
         )
         
+    return api_key
+
+
+def verify_api_key(request: Request, api_key: str = Depends(authenticate_api_key)) -> str:
+    from app.core.rate_limit import limiter
+
     # Rate limit by IP
     client_ip = request.client.host if request.client else "unknown"
     ip_retry = limiter.check_ip_limit(client_ip, settings.rate_limit_per_minute_ip, 60)

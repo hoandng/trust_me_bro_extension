@@ -2,6 +2,7 @@ export interface SelectionPayload {
   text: string;
   platform: string;
   page_url: string;
+  model_id?: string;
 }
 
 export interface SourceItem {
@@ -12,7 +13,15 @@ export interface SourceItem {
   stance?: string;
 }
 
+export interface ModelUsage {
+  requested_model: string;
+  extraction_model: string | null;
+  assessment_model: string | null;
+  fallbacks: Array<{ stage: string; model: string; reason: string }>;
+}
+
 export interface AnalyzeResponse {
+  model_usage?: ModelUsage | null;
   verdict: 'Thật' | 'Giả' | 'Thiếu ngữ cảnh' | 'Không thể kiểm chứng';
   confidence: number;
   explanation: string;
@@ -30,6 +39,7 @@ export interface TabAnalysisState {
 }
 
 export interface BackendAnalysisResponse {
+  model_usage?: ModelUsage | null;
   verdict: string;
   confidence_score: number;
   explanation: string;

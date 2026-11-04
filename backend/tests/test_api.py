@@ -97,3 +97,59 @@ def test_analyze_endpoint_invalid_platform():
     assert response.status_code == 422
     data = response.json()
     assert "Input should be 'facebook', 'x' or 'reddit'" in data["detail"][0]["msg"]
+
+
+def test_model_catalog_authentication_and_no_analysis_charge():
+    from app.core.rate_limit import limiter
+    before = limiter.global_daily_count
+    assert client.get('/api/v1/models').status_code == 401
+    response = client.get('/api/v1/models', headers={'X-API-Key': 'test_secret_key'})
+    assert response.status_code == 200
+    assert response.json()['default_model'] == settings.gemini_model
+    assert response.json()['models'] == settings.available_gemini_models
+    assert limiter.global_daily_count == before
+
+
+def test_disabled_model_rejected():
+    response = client.post('/api/v1/analyze', headers={'X-API-Key': 'test_secret_key'}, json={
+        'text': 'This claim has enough text for the validation.',
+        'platform': 'facebook', 'model_id': 'not-an-enabled-model'
+    })
+    assert response.status_code == 422
+
+
+def test_model_selection_metadata_and_all_models_exhausted():
+    from app.api.deps import get_orchestrator
+    from app.schemas.response import AnalyzeResponse, ServiceStatus, ModelUsage
+    from app.services.gemini_model_pool import GeminiQuotaExhausted
+
+    class FakeService:
+        def select_model(self, model):
+            self.model_usage = ModelUsage(requested_model=model or settings.gemini_model,
+                                          extraction_model=settings.gemini_model)
+
+    class FakeOrchestrator:
+        gemini_service = FakeService()
+        exhausted = False
+
+        async def analyze(self, ctx):
+            if self.exhausted:
+                raise GeminiQuotaExhausted(60)
+            return AnalyzeResponse(verdict='unverified', confidence_score=0,
+                                   explanation='Test', sources=[],
+                                   service_status=ServiceStatus(gemini='ok', tavily='empty', factcheck='empty'))
+
+    orchestrator = FakeOrchestrator()
+    app.dependency_overrides[get_orchestrator] = lambda: orchestrator
+    payload = {'text': 'This claim has enough text for the validation.',
+               'platform': 'facebook', 'model_id': settings.gemini_model}
+    try:
+        response = client.post('/api/v1/analyze', headers={'X-API-Key': 'test_secret_key'}, json=payload)
+        assert response.status_code == 200
+        assert response.json()['model_usage']['requested_model'] == settings.gemini_model
+        orchestrator.exhausted = True
+        response = client.post('/api/v1/analyze', headers={'X-API-Key': 'test_secret_key'}, json=payload)
+        assert response.status_code == 503
+        assert response.headers['Retry-After'] == '60'
+    finally:
+        app.dependency_overrides.clear()

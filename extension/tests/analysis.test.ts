@@ -37,6 +37,12 @@ beforeEach(() => {
   listeners.clear();
   globalThis.chrome = {
     storage: {
+      local: {
+        get: async (key: string) => ({ [key]: values.get(key) }),
+        set: async (items: Record<string, unknown>) => {
+          for (const [key, value] of Object.entries(items)) values.set(key, value);
+        },
+      },
       session: {
         get: async (key: string) => ({ [key]: values.get(key) }),
         set: async (items: Record<string, unknown>) => {
@@ -136,4 +142,25 @@ test('lỗi kết nối được chuyển thành thông báo dễ hiểu', async
   await handleAnalysisRequest(request, sender);
   assert.equal((await getTabState(7))?.status, 'error');
   assert.match((await getTabState(7))?.error || '', /Lỗi kết nối/);
+});
+
+test('model đã lưu được dùng cho request tiếp theo và ghi vào state', async () => {
+  values.set('preferredGeminiModel', 'gemini-test');
+  globalThis.fetch = async (_url, options) => {
+    assert.equal(JSON.parse(options?.body as string).model_id, 'gemini-test');
+    values.set('preferredGeminiModel', 'changed-during-request');
+    return Response.json(backendResponse);
+  };
+  await handleAnalysisRequest(request, sender);
+  assert.equal((await getTabState(7))?.request?.model_id, 'gemini-test');
+  assert.equal(values.get('preferredGeminiModel'), 'changed-during-request');
+});
+
+test('giữ metadata model và thông báo hết quota từ backend', async () => {
+  const usage = { requested_model: 'a', extraction_model: 'b', assessment_model: 'b',
+    fallbacks: [{ stage: 'extraction', model: 'a', reason: 'quota' }] };
+  assert.deepEqual(mapAnalysisResponse({ ...backendResponse, model_usage: usage }).model_usage, usage);
+  globalThis.fetch = async () => Response.json({ detail: 'Tất cả model chạm hạn mức' }, { status: 503 });
+  await handleAnalysisRequest(request, sender);
+  assert.equal((await getTabState(7))?.error, 'Tất cả model chạm hạn mức');
 });

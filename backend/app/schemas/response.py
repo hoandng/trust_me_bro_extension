@@ -15,9 +15,23 @@ class ServiceStatus(BaseModel):
     tavily: Literal["ok", "error", "empty"]
     gemini: Literal["ok", "error", "empty"]
 
+class ModelFallback(BaseModel):
+    stage: str
+    model: str
+    reason: str = "quota"
+
+
+class ModelUsage(BaseModel):
+    requested_model: str
+    extraction_model: str | None = None
+    assessment_model: str | None = None
+    fallbacks: list[ModelFallback] = []
+
+
 class AnalyzeResponse(BaseModel):
     verdict: Literal["likely_true", "likely_false", "mixed", "unverified"]
     confidence_score: float
     explanation: str
     sources: list[Source]
     service_status: ServiceStatus
+    model_usage: ModelUsage | None = None

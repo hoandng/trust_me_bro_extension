@@ -128,3 +128,15 @@ Kiểm tra thủ công sau khi reload extension:
 4. Tắt backend hoặc tạo lỗi API: kiểm tra thông báo lỗi và nút Thử lại.
 5. Kiểm tra Xem thêm/Thu gọn, link nguồn, thanh confidence và Sao chép kết quả.
 6. Nếu Chrome chặn mở panel từ message, badge `!` xuất hiện; bấm icon extension để mở panel.
+
+## Chọn model Gemini
+
+Bộ chọn model nằm phía trên side panel, lấy danh sách từ backend. Khi chưa có lựa
+chọn, lần phân tích đầu dùng model mặc định của server. Lựa chọn được lưu trong
+`chrome.storage.local` và áp dụng cho các lần phân tích tiếp theo, kể cả khi mở lại
+trình duyệt. Chọn “Mặc định” để quay về cấu hình server.
+
+Đổi lựa chọn không gửi lại nội dung và không thay model của request đang chạy.
+Nút “Thử lại” dùng lựa chọn mới nhất. Kết quả hiển thị model thực tế cho trích xuất,
+đánh giá và thông báo nếu đã tự chuyển do quota; fallback không ghi đè lựa chọn.
+Sau khi build, reload extension tại `chrome://extensions` để cập nhật giao diện.
