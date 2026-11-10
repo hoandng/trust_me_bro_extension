@@ -1,10 +1,198 @@
+import asyncio
+import json
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
+import respx
+from app.core.config import settings
 from app.orchestrator.analysis_orchestrator import AnalysisOrchestrator
 from app.schemas.internal import AnalysisContext, ServiceResult
 from app.schemas.response import Source
+from app.services.factcheck_service import FactCheckService
 from app.services.gemini_service import Assessment, ClaimExtraction
+from app.services.tavily_service import TavilySearchService
+
+
+def gemini_with_queries(queries):
+    gemini = MockGeminiService()
+    gemini.extract_claims = AsyncMock(
+        return_value=ClaimExtraction(
+            main_claim="Synthetic claim",
+            search_queries=queries,
+            detected_lang="en",
+            is_checkable=True,
+        )
+    )
+    return gemini
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("limit", "queries", "expected"),
+    [
+        (2, ["first", "second", "ignored"], ["first", "second"]),
+        (1, ["first", "second"], ["first"]),
+        (2, [" first ", "first", "ignored"], ["first"]),
+        (2, ["", " "], ["Synthetic claim"]),
+    ],
+)
+@respx.mock
+async def test_search_request_budget_includes_fallbacks(
+    monkeypatch, limit, queries, expected
+):
+    monkeypatch.setattr(settings, "search_query_limit", limit)
+    monkeypatch.setattr(settings, "factcheck_api_key", "test_key")
+    monkeypatch.setattr(settings, "tavily_api_key", "test_key")
+    factcheck_route = respx.get(
+        "https://factchecktools.googleapis.com/v1alpha1/claims:search"
+    ).mock(return_value=httpx.Response(200, json={"claims": []}))
+    tavily_route = respx.post("https://api.tavily.com/search").mock(
+        return_value=httpx.Response(200, json={"results": []})
+    )
+
+    async with httpx.AsyncClient() as client:
+        result = await AnalysisOrchestrator(
+            gemini_with_queries(queries),
+            FactCheckService(client),
+            TavilySearchService(client),
+        ).analyze(AnalysisContext(text="Synthetic post"))
+
+    assert result.verdict == "unverified"
+    assert factcheck_route.call_count == tavily_route.call_count == 2 * len(expected)
+    assert sorted(
+        (
+            call.request.url.params["query"],
+            call.request.url.params.get("languageCode", ""),
+        )
+        for call in factcheck_route.calls
+    ) == sorted((query, lang) for query in expected for lang in ("en", ""))
+    payloads = [json.loads(call.request.content) for call in tavily_route.calls]
+    assert sorted(
+        (payload["query"], payload["topic"]) for payload in payloads
+    ) == sorted((query, topic) for query in expected for topic in ("news", "general"))
+
+
+@pytest.mark.asyncio
+async def test_queries_run_concurrently_and_merge_partial_results(monkeypatch):
+    monkeypatch.setattr(settings, "search_query_limit", 2)
+    reviewed = Source(
+        title="Review",
+        url="https://factcheck.org/review",
+        original_stance="refutes",
+        stance="refutes",
+        claim_text="Synthetic claim",
+    )
+    news = Source(title="Article", url="https://example.com/article")
+    other_news = Source(title="Other article", url="https://example.com/other")
+    contexts = []
+    ready = asyncio.Event()
+
+    async def check(provider, ctx):
+        contexts.append(ctx)
+        if len(contexts) == 4:
+            ready.set()
+        await ready.wait()
+        query = ctx.search_queries[0]
+        if provider == "factcheck":
+            if query == "first":
+                raise RuntimeError("Synthetic search failure")
+            return ServiceResult(service=provider, status="ok", sources=[reviewed])
+        return ServiceResult(
+            service=provider,
+            status="ok",
+            sources=[Source(title="Duplicate", url=reviewed.url), news]
+            if query == "first"
+            else [news, other_news],
+        )
+
+    async def check_factcheck(ctx):
+        return await check("factcheck", ctx)
+
+    async def check_tavily(ctx):
+        return await check("tavily", ctx)
+
+    factcheck = MockFactCheckService()
+    tavily = MockTavilyService()
+    factcheck.check = AsyncMock(side_effect=check_factcheck)
+    tavily.check = AsyncMock(side_effect=check_tavily)
+
+    result = await asyncio.wait_for(
+        AnalysisOrchestrator(
+            gemini_with_queries(["first", "second"]), factcheck, tavily
+        ).analyze(AnalysisContext(text="Synthetic post")),
+        timeout=2,
+    )
+
+    assert len({id(ctx) for ctx in contexts}) == 4
+    assert result.service_status.factcheck == "error"
+    assert result.service_status.tavily == "ok"
+    assert [source.url for source in result.sources] == [
+        reviewed.url,
+        news.url,
+        other_news.url,
+    ]
+    assert result.sources[0].original_stance == "refutes"
+
+
+@pytest.mark.asyncio
+async def test_rank_before_limit_and_disallow_override_from_excluded_source():
+    factcheck = MockFactCheckService()
+    reviewed = Source(
+        title="Review",
+        url="https://example.com/review",
+        original_stance="refutes",
+        stance="refutes",
+        claim_text="Synthetic claim",
+    )
+    factcheck.check = AsyncMock(
+        return_value=ServiceResult(
+            service="factcheck",
+            status="ok",
+            sources=[reviewed],
+        )
+    )
+    default_sources = [
+        Source(title="Article", url=f"https://example.com/{i}") for i in range(8)
+    ]
+    tier2 = Source(title="Reference", url="https://britannica.com/reference")
+    tier1 = Source(title="News", url="https://reuters.com/news")
+    # Tám nguồn tier cao hơn sẽ đẩy nguồn Fact Check ra khỏi tập bằng chứng.
+    more_tier1 = [
+        Source(title="News", url=f"https://reuters.com/{i}") for i in range(6)
+    ]
+    tavily = MockTavilyService()
+    tavily.check = AsyncMock(
+        return_value=ServiceResult(
+            service="tavily",
+            status="ok",
+            sources=[*default_sources, tier2, tier1, *more_tier1],
+        )
+    )
+    gemini = gemini_with_queries(["first"])
+    gemini.assess = AsyncMock(
+        return_value=Assessment(
+            verdict="mixed",
+            confidence_score=0.4,
+            explanation="Synthetic result",
+            source_stances=[
+                {"url": reviewed.url, "stance": "refutes", "factcheck_match": True}
+            ],
+        )
+    )
+
+    result = await AnalysisOrchestrator(gemini, factcheck, tavily).analyze(
+        AnalysisContext(text="Synthetic post")
+    )
+
+    assert len(result.sources) == 8
+    assert result.sources[0].url == tier1.url
+    assert result.sources[-1].url == tier2.url
+    assert [source.url for source in gemini.assess.call_args.args[2]] == [
+        source.url for source in result.sources
+    ]
+    assert reviewed.url not in {source.url for source in result.sources}
+    assert result.verdict == "mixed"
 
 
 @pytest.mark.asyncio

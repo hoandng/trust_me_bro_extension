@@ -1,7 +1,9 @@
 import asyncio
 
+from app.core.config import MAX_SEARCH_QUERIES, settings
+from app.core.source_ranking import rank_sources
 from app.schemas.internal import AnalysisContext
-from app.schemas.response import AnalyzeResponse, ServiceStatus
+from app.schemas.response import AnalyzeResponse, ServiceStatus, Source
 from app.services.gemini_model_pool import GeminiQuotaExhausted
 
 
@@ -56,54 +58,48 @@ class AnalysisOrchestrator:
         ctx.search_queries = extraction.search_queries
         ctx.lang = extraction.detected_lang
 
-        # Stage 1: FactCheck + Tavily concurrently
-        tasks = [self.factcheck_service.check(ctx), self.tavily_service.check(ctx)]
+        # Tối đa hai query, hai provider và một fallback cho mỗi cặp.
+        query_limit = min(settings.search_query_limit, MAX_SEARCH_QUERIES)
+        queries = dict.fromkeys(
+            query.strip()
+            for query in extraction.search_queries[:query_limit]
+            if query.strip()
+        )
+        if not queries and (claim := extraction.main_claim.strip()):
+            queries[claim] = None
 
+        providers = {"factcheck": self.factcheck_service, "tavily": self.tavily_service}
+        jobs = [
+            (name, service.check(ctx.model_copy(update={"search_queries": [query]})))
+            for name, service in providers.items()
+            for query in queries
+        ]
+        sources_by_provider: dict[str, list[Source]] = {name: [] for name in providers}
         try:
-            # Overall timeout for Stage 1 & 2 is around 15s (25s total)
             results = await asyncio.wait_for(
-                asyncio.gather(*tasks, return_exceptions=True), timeout=15.0
+                asyncio.gather(*(job for _, job in jobs), return_exceptions=True),
+                timeout=15.0,
             )
-        except asyncio.TimeoutError:
-            results = [Exception("Timeout"), Exception("Timeout")]
+        except TimeoutError:
+            results = [TimeoutError() for _ in jobs]
 
-        all_sources = []
-        factcheck_res = None
-        tavily_res = None
+        for (name, _), result in zip(jobs, results, strict=True):
+            if isinstance(result, BaseException):
+                status_dict[name] = "error"
+                continue
+            sources_by_provider[name].extend(result.sources)
+            if result.status == "error" or status_dict[name] == "empty":
+                status_dict[name] = result.status
 
-        # Extract results
-        for i, service_name in enumerate(["factcheck", "tavily"]):
-            res = results[i]
-            if isinstance(res, Exception):
-                status_dict[service_name] = "error"
-            else:
-                status_dict[service_name] = res.status
-                if res.sources:
-                    all_sources.extend(res.sources)
-                if service_name == "factcheck":
-                    factcheck_res = res
-                else:
-                    tavily_res = res
-
-        # Sort sources: factcheck first, then remove duplicate URLs, max 8
-        unique_urls = set()
-        sorted_sources = []
-
-        # Add factcheck sources first
-        if factcheck_res and factcheck_res.sources:
-            for s in factcheck_res.sources:
-                if s.url not in unique_urls:
-                    unique_urls.add(s.url)
-                    sorted_sources.append(s.model_copy(deep=True))
-
-        # Add tavily sources next
-        if tavily_res and tavily_res.sources:
-            for s in tavily_res.sources:
-                if s.url not in unique_urls:
-                    unique_urls.add(s.url)
-                    sorted_sources.append(s.model_copy(deep=True))
-
-        sorted_sources = sorted_sources[:8]
+        factcheck_sources = sources_by_provider["factcheck"]
+        tavily_sources = sources_by_provider["tavily"]
+        unique_sources = {}
+        for source in (*factcheck_sources, *tavily_sources):
+            unique_sources.setdefault(source.url, source)
+        sorted_sources = [
+            source.model_copy(deep=True)
+            for source in rank_sources(list(unique_sources.values()))[:8]
+        ]
 
         # If both FactCheck and Tavily are empty/error
         if not sorted_sources:
@@ -136,10 +132,8 @@ class AnalysisOrchestrator:
         if assessment.status == "error":
             status_dict["gemini"] = "error"
 
-        factcheck_urls = (
-            {s.url for s in factcheck_res.sources} if factcheck_res else set()
-        )
-        tavily_urls = {s.url for s in tavily_res.sources} if tavily_res else set()
+        factcheck_urls = {s.url for s in factcheck_sources}
+        tavily_urls = {s.url for s in tavily_sources}
         if assessment.source_stances:
             stance_map = {st.url: st.stance for st in assessment.source_stances}
             for s in sorted_sources:
@@ -158,10 +152,12 @@ class AnalysisOrchestrator:
         factcheck_clear_refutes = False
 
         match_map = {st.url: st.factcheck_match for st in assessment.source_stances}
-        if factcheck_res and factcheck_res.sources and assessment.status != "error":
-            for s in factcheck_res.sources[:1]:
+        if assessment.status != "error":
+            assessed_urls = {s.url for s in sorted_sources}
+            for s in factcheck_sources[:1]:
                 if (
-                    not s.claim_text
+                    s.url not in assessed_urls
+                    or not s.claim_text
                     or not s.claim_text.strip()
                     or match_map.get(s.url) is not True
                 ):

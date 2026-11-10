@@ -13,6 +13,7 @@ class Source(BaseModel):
         default=None, frozen=True
     )
     claim_text: str | None = None
+    published_date: str | None = None
 
 
 class ServiceStatus(BaseModel):

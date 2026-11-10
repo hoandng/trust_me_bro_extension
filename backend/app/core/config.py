@@ -1,7 +1,13 @@
+import os
+
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-import os
-env_path = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"))
+env_path = os.path.abspath(
+    os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env")
+)
+MAX_SEARCH_QUERIES = 2
+
 
 class Settings(BaseSettings):
     gemini_api_key: str = ""
@@ -18,16 +24,22 @@ class Settings(BaseSettings):
     tavily_include_domains: list[str] = []
     tavily_exclude_domains: list[str] = []
     factcheck_api_key: str = ""
+    search_query_limit: int = Field(
+        default=MAX_SEARCH_QUERIES, ge=1, le=MAX_SEARCH_QUERIES
+    )
     extension_api_key: str = ""
     allowed_origins: str = ""
-    
+
     rate_limit_per_minute_ip: int = 10
     rate_limit_per_day_key: int = 100
     daily_analyze_limit_global: int = 1000
     max_body_size_bytes: int = 8192
-    
+
     env: str = "development"
 
-    model_config = SettingsConfigDict(env_file=env_path, env_file_encoding="utf-8-sig", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=env_path, env_file_encoding="utf-8-sig", extra="ignore"
+    )
+
 
 settings = Settings()

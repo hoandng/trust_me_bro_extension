@@ -1,0 +1,5 @@
+{
+  "tier1": ["reuters.com", "who.int", "factcheck.org"],
+  "tier2": ["britannica.com"],
+  "default": []
+}

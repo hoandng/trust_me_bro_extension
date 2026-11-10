@@ -1,5 +1,6 @@
 import logging
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from google import genai
@@ -7,6 +8,7 @@ from google.genai import types
 from pydantic import BaseModel, Field, ValidationError
 
 from app.core.config import settings
+from app.core.source_ranking import source_tier
 from app.prompts.gemini_prompts import ASSESS_PROMPT, EXTRACT_CLAIMS_PROMPT
 from app.schemas.response import ModelFallback, ModelUsage, Source
 from app.services.gemini_model_pool import (
@@ -16,6 +18,7 @@ from app.services.gemini_model_pool import (
 )
 
 logger = logging.getLogger(__name__)
+VIETNAM_TIMEZONE = timezone(timedelta(hours=7), "Asia/Ho_Chi_Minh")
 
 
 class ClaimExtraction(BaseModel):
@@ -185,15 +188,21 @@ class GeminiService:
         evidence_text = ""
         valid_urls = set()
         for i, src in enumerate(evidence):
-            evidence_text += f"Source {i + 1}:\nURL: {src.url}\nTitle: {src.title}\nSnippet: {src.snippet}\n\n"
             evidence_text += (
+                f"Source {i + 1}:\nURL: {src.url}\nTitle: {src.title}\nSnippet: {src.snippet}\n"
+                f"Source tier: {source_tier(src.url)}\n"
+                f"Published date: {src.published_date or 'unknown'}\n"
                 f"Source type: {'factcheck' if src.original_stance is not None else 'tavily'}\n"
                 f"FactCheck claim: {src.claim_text}\n"
                 f"Original stance: {src.original_stance}\n\n"
             )
             valid_urls.add(src.url)
 
-        input_text = f"Claim to verify: {claim}\n\n<post>\n{text}\n</post>\n\nEvidence:\n{evidence_text}"
+        today = datetime.now(VIETNAM_TIMEZONE).date().isoformat()
+        input_text = (
+            f"Current date (Asia/Ho_Chi_Minh): {today}\n"
+            f"Claim to verify: {claim}\n\n<post>\n{text}\n</post>\n\nEvidence:\n{evidence_text}"
+        )
 
         response_format = [
             {

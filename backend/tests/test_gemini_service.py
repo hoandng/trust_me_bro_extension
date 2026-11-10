@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 from typing import ClassVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -77,6 +78,45 @@ async def test_assess_factcheck_match_prompt_schema_and_filter(mock_gemini_clien
         schema["$defs"]["SourceStance"]["properties"]["factcheck_match"]["type"]
         == "boolean"
     )
+
+
+@pytest.mark.asyncio
+async def test_assess_includes_timing_and_source_tier(mock_gemini_client):
+    mock_gemini_client.aio.interactions.create = AsyncMock(
+        return_value=MagicMock(
+            output_text=json.dumps(
+                {
+                    "verdict": "unverified",
+                    "confidence_score": 0.2,
+                    "explanation": "Synthetic result",
+                    "source_stances": [],
+                }
+            )
+        ),
+    )
+    source = Source(
+        title="Dated article",
+        url="https://www.reuters.com/synthetic",
+        published_date="2024-01-02",
+    )
+    utc_time = datetime(2026, 11, 9, 18, tzinfo=timezone.utc)
+    with patch("app.services.gemini_service.datetime") as clock:
+        clock.now.side_effect = utc_time.astimezone
+        await GeminiService().assess(
+            "Synthetic post",
+            "Synthetic claim",
+            [
+                source,
+                Source(title="Undated article", url="https://example.com/undated"),
+            ],
+        )
+
+    args = mock_gemini_client.aio.interactions.create.call_args.kwargs
+    assert "Current date (Asia/Ho_Chi_Minh): 2026-11-10" in args["input"]
+    assert "Source tier: tier1\nPublished date: 2024-01-02" in args["input"]
+    assert "Source tier: default\nPublished date: unknown" in args["input"]
+    assert "evidence predates the event" in args["system_instruction"]
+    assert "an old story is being shared as new" in args["system_instruction"]
 
 
 @pytest.mark.asyncio
