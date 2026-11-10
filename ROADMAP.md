@@ -4,15 +4,14 @@
 
 ## Trạng thái hiện tại
 
-- **Phiên bản:** v0.1 (demo)
-- **Giai đoạn:** MVP — có adapter Facebook và Reddit
-- **Cập nhật lần cuối:** 2026-11-01
+- **Giai đoạn:** MVP (demo) có adapter Facebook và Reddit, hỗ trợ chọn model Gemini trong side panel.
+- **Cập nhật lần cuối:** 2026-11-10
 
 ## Mục tiêu tổng thể
 
 Xây dựng một extension giúp người dùng kiểm tra nhanh độ tin cậy của bất kỳ đoạn nội dung nào trên mạng xã hội, có trích dẫn nguồn rõ ràng, mở rộng dần ra nhiều nền tảng và nhiều nguồn dữ liệu kiểm chứng.
 
-## Milestone 1: MVP Demo (Facebook only) — đang làm
+## Milestone 1: MVP Demo trên Facebook
 
 Mục tiêu: chứng minh luồng hoạt động end-to-end.
 
@@ -24,7 +23,7 @@ Mục tiêu: chứng minh luồng hoạt động end-to-end.
 - [x] Service: tích hợp Google Fact Check Tools API
 - [x] Service: tích hợp Tavily API (tìm nguồn liên quan)
 - [x] Service: tích hợp Gemini API (phân tích + tổng hợp đánh giá cuối)
-- [x] Orchestrator: gọi song song 3 service, tổng hợp kết quả thành 1 response chuẩn
+- [x] Orchestrator: Gemini trích xuất khẳng định, Fact Check và Tavily tra cứu song song, Gemini đánh giá khi có bằng chứng
 - [x] Bảo mật cơ bản: API key backend qua `.env`, CORS giới hạn theo extension ID, giới hạn độ dài input
 - [x] Test thủ công toàn luồng trên 5-10 bài post Facebook thực tế (có tin thật, tin giả, tin chưa rõ)
 
@@ -36,14 +35,16 @@ Mục tiêu: extension dùng được mượt mà, xử lý lỗi tốt, sẵn s
 - [x] Tách HTTP client, mapper response, trạng thái theo tab, controller và renderer; thêm module tests với mock
 - [x] Xử lý trạng thái loading/error rõ ràng trong side panel
 - [x] Rate limiting phía backend (tránh spam/tốn quota API trả phí)
-- [x] Retry/fallback khi 1 trong 3 API bên ngoài lỗi hoặc timeout (không để cả response fail vì 1 service hỏng)
+- [x] Trả kết quả với trạng thái từng dịch vụ khi nguồn tra cứu lỗi hoặc timeout
+- [x] Cho phép chọn model Gemini ưu tiên, lưu lựa chọn và hiển thị model thực tế theo từng bước trong side panel
+- [x] Tự chuyển model khi Gemini trả `429`, chia sẻ cooldown trong process và trả `503` kèm `Retry-After` khi hết model khả dụng do quota
 - [x] Giới hạn độ dài văn bản được phép gửi phân tích + thông báo rõ cho người dùng
-- [x] Logging metadata (không log nội dung text đầy đủ) để debug và theo dõi usage
+- [x] Ghi metadata của lượt phân tích để debug và theo dõi usage, với giới hạn ghi log được ghi trong [checklist bảo mật](SECURITY_CHECKLIST.md)
 - [x] Viết test tự động cho backend (mock 3 API ngoài)
 
 ## Milestone 3: Nâng cấp tính năng (theo yêu cầu ban đầu)
 
-- [ ] Chèn nút phân tích trực tiếp vào từng bài post (không cần bôi đen thủ công)
+- [ ] Chèn nút phân tích trực tiếp vào từng bài post ngay trên News Feed của Facebook/Reddit (trang chi tiết bài viết Reddit `/comments/` đã hỗ trợ chèn nút kiểm chứng)
 - [ ] Chế độ click vào bài post → tự động phân tích toàn bộ nội dung post đó
 - [ ] Cache kết quả phân tích theo hash nội dung: thêm `extension/src/infrastructure/cache/`, TTL và policy của từng tính năng; có thể bổ sung Redis ở backend khi cần cache dùng chung
 - [ ] Tóm tắt bài báo: thêm `features/article-summary/`, hợp đồng message và endpoint backend tương ứng

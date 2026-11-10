@@ -1,9 +1,8 @@
 # PROMPTS.md — Kế hoạch đầu việc & prompt cho AI
 
-> Các task scaffold/mock bên dưới mô tả các giai đoạn phát triển. Khi sửa extension hiện tại, dùng cấu trúc module theo tính năng trong `ARCHITECTURE.md` §2.1 và `extension/README.md`; không tạo lại các thư mục source cũ. Cache và tóm tắt bài báo là tính năng dự kiến, chưa triển khai.
+> T0–T13 ghi lại các prompt phát triển ban đầu. Khi làm việc trên mã hiện tại, dùng cấu trúc và luồng trong [ARCHITECTURE.md](ARCHITECTURE.md), [hướng dẫn extension](extension/README.md) và [hướng dẫn backend](backend/README.md). Xem [ROADMAP.md](ROADMAP.md) để theo dõi các hạng mục tiếp theo.
 
-> Cách dùng: làm **tuần tự** từ T0 → T15. Mỗi task = 1 phiên chat mới với AI + 1 commit khi chạy được.
-> Mỗi prompt đã gồm: bối cảnh, yêu cầu, tiêu chí hoàn thành, điều không được làm.
+> Mỗi prompt ghi lại bối cảnh, yêu cầu và tiêu chí hoàn thành của một task. Các prompt scaffold và mock áp dụng cho giai đoạn khởi tạo.
 
 ## Quy ước chung
 
@@ -20,17 +19,22 @@ Với API/SDK bên ngoài (Gemini, Tavily, Google Fact Check, Chrome APIs):
 tra tài liệu chính thức mới nhất, không dựa vào trí nhớ về tên model/endpoint/tham số.
 ```
 
-**Hợp đồng dữ liệu (chốt ngay từ T1, mọi task sau bám theo):**
+**Hợp đồng API hiện tại**
 
 ```text
 AnalyzeRequest:  { text: str (20–2000 ký tự), platform: "facebook"|"x"|"reddit",
-                   page_url?: str, lang?: str }
+                   page_url?: str, lang?: str, model_id?: str }
 AnalyzeResponse: { verdict: "likely_true"|"likely_false"|"mixed"|"unverified",
                    confidence_score: float 0..1,
                    explanation: str,
                    sources: [{ title, url, publisher?, snippet?, stance?: "supports"|"refutes"|"neutral" }],
-                   service_status: { factcheck: "ok"|"error"|"empty", tavily: ..., gemini: ... } }
+                   service_status: { factcheck: "ok"|"error"|"empty", tavily: ..., gemini: ... },
+                   model_usage: null | { requested_model: str, extraction_model: str|null,
+                     assessment_model: str|null, fallbacks: [{ stage, model, reason }] } }
+ModelCatalog:    { default_model: str, models: str[] }
 ```
+
+`GET /api/v1/models` trả `ModelCatalog`. `POST /api/v1/analyze` dùng `model_id` đã bật hoặc model mặc định khi bỏ qua trường này. Hai endpoint dùng `X-API-Key`. Backend trả `503` cùng `Retry-After` khi mọi model Gemini đang chạm hạn mức. Xem [schema request](backend/app/schemas/request.py) và [schema response](backend/app/schemas/response.py) khi thay đổi hợp đồng.
 
 **Bản đồ tổng:**
 
@@ -68,7 +72,7 @@ Yêu cầu:
 - Theo đúng cấu trúc thư mục trong ARCHITECTURE.md mục 2.2
   (app/main.py, api/v1/analyze.py, core/config.py, core/logging.py, schemas/, services/, orchestrator/).
   Các thư mục services/ và orchestrator/ chỉ tạo khung rỗng (__init__.py).
-- schemas/request.py và schemas/response.py theo "Hợp đồng dữ liệu" trong PROMPTS.md,
+- schemas/request.py và schemas/response.py theo hợp đồng phân tích ban đầu,
   có validate độ dài text 20–2000 ký tự.
 - POST /api/v1/analyze: hiện tại trả về DỮ LIỆU MOCK cố định đúng schema AnalyzeResponse.
 - GET /health trả {"status":"ok"}.

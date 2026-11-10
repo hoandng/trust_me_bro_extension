@@ -1,7 +1,7 @@
 # ARCHITECTURE.md
 
 > Dự án: **Trình mở rộng (browser extension) kiểm tra độ tin cậy bài đăng mạng xã hội**
-> Phiên bản tài liệu: v0.2 — Extension module theo tính năng (Facebook, Reddit)
+> Phạm vi hiện tại gồm extension cho Facebook và Reddit, bộ chọn model Gemini và cơ chế chuyển model theo quota.
 
 ## 1. Kiến trúc tổng quan
 
@@ -27,7 +27,7 @@ Mô hình: **Client-Server**, trong đó Client là Chrome Extension (Manifest V
 **Vì sao chọn kiến trúc này:**
 - Tách biệt extension (chỉ làm UI + bắt sự kiện) khỏi backend (chứa toàn bộ logic AI, API key) → **bảo mật**: API key của Gemini/Tavily/Fact Check không bao giờ nằm trong code extension (client-side), tránh bị lộ khi người dùng inspect extension.
 - Backend đóng vai trò orchestrator, dễ thêm/bớt/nâng cấp nguồn dữ liệu (thêm API mới) mà không cần cập nhật extension.
-- Dễ mở rộng sang nền tảng khác (X, Reddit...) vì phần logic phân tích nằm hoàn toàn ở backend, chỉ cần bổ sung adapter trong content script cho từng nền tảng.
+- Dễ mở rộng sang nền tảng khác như X vì logic phân tích nằm ở backend và mỗi nền tảng có adapter riêng.
 
 ## 2. Các thành phần chính
 
@@ -48,6 +48,7 @@ extension/
 │   │   └── analysis/
 │   │       ├── types.ts            # request, response backend/UI, trạng thái
 │   │       ├── state-store.ts      # khóa và trạng thái phân tích theo tab
+│   │       ├── model-preference.ts # model ưu tiên trong chrome.storage.local
 │   │       ├── background/
 │   │       │   ├── handle-analysis.ts # điều phối loading → API → success/error
 │   │       │   ├── analysis-api.ts    # endpoint phân tích
@@ -57,7 +58,7 @@ extension/
 │   │       │   ├── adapters/       # interface, registry, Facebook, Reddit
 │   │       │   └── ui/             # nút nổi trong Shadow DOM
 │   │       └── sidepanel/
-│   │           ├── controller.ts  # sự kiện tab, subscription, retry
+│   │           ├── controller.ts  # sự kiện tab, subscription, retry, chọn model
 │   │           ├── render.ts      # DOM, loading, kết quả, sao chép
 │   │           └── index.css
 │   ├── infrastructure/
@@ -75,19 +76,21 @@ extension/
 
 - `entrypoints/` chỉ đăng ký listener và khởi tạo tính năng.
 - `features/<tên>/` giữ logic, dữ liệu và giao diện của tính năng đó. Module background không import DOM của content script/side panel; content script không import HTTP client hoặc logic background.
-- Module dùng ở cả background và side panel đặt ở gốc tính năng, như `analysis/state-store.ts`.
+- Module dùng ở cả background và side panel đặt ở gốc tính năng, như `state-store.ts` và `model-preference.ts`.
 - `infrastructure/` bao bọc HTTP và Chrome Storage; không import logic từ `features/` hoặc `entrypoints/`.
 - `shared/` chứa hợp đồng giao tiếp và cấu hình dùng chung. `shared/messages.ts` chỉ import **type** của tính năng, không kéo mã thực thi của tính năng sang ngữ cảnh khác.
 - Mọi import kiểu dữ liệu dùng `import type` để tránh đưa mã không cần thiết vào bundle.
 
 **Luồng phân tích hiện tại:**
 
-1. `entrypoints/content.ts` khởi tạo selection controller và chọn adapter theo URL.
-2. Nút nổi hoặc nút Reddit gửi `ANALYZE_REQUEST` qua `chrome.runtime.sendMessage`.
-3. `entrypoints/background.ts` kiểm tra hợp đồng message rồi chuyển cho `handle-analysis.ts`.
-4. Handler mở side panel, ghi `loading`, gọi `analysis-api.ts`; HTTP client gửi `POST /api/v1/analyze` với timeout 60 giây.
-5. `map-response.ts` đổi verdict và confidence của backend sang dữ liệu UI; handler ghi `success` hoặc `error`.
-6. Side panel đọc và theo dõi `tabState_<tabId>` trong `chrome.storage.session`; controller chuyển trạng thái cho renderer.
+1. `entrypoints/content.ts` khởi tạo `initSelectionController()`, chọn adapter theo URL (`RedditAdapter` hoặc `FacebookAdapter`) và gọi `adapter.init()` nếu có.
+   - Trên cả Facebook và Reddit: khi bôi đen văn bản dài 20–2000 ký tự (debounce 150ms), `FloatingButton` (trong closed Shadow DOM) hiện phía trên vùng chọn.
+   - Riêng trên Reddit: tại trang chi tiết bài viết (`/comments/`), `RedditAdapter` dùng `IntersectionObserver` và `MutationObserver` để quét thẻ `<shreddit-post>`, bóc tách tiêu đề (`[slot="title"]`/`post-title`), nội dung (`[slot="text-body"]` hoặc `#-post-rtjson-content` trong shadowRoot) và link bài báo (`content-href`), sau đó gắn viền nhận diện và chèn nút **"Kiểm chứng bài viết"**.
+2. Nút nổi hoặc nút bài viết Reddit gửi `ANALYZE_REQUEST` qua `chrome.runtime.sendMessage`.
+3. `entrypoints/background.ts` kiểm tra hợp đồng message bằng `isAnalyzeRequest()` rồi chuyển cho `handle-analysis.ts`.
+4. Handler mở side panel ngay trong ngữ cảnh user gesture (`chrome.sidePanel.open({ tabId })`; nếu bị chặn sẽ đặt badge `!` màu đỏ trên icon tiện ích), đọc model ưu tiên `preferredGeminiModel` từ `chrome.storage.local` cho lượt này, ghi trạng thái `loading` vào `chrome.storage.session` và gọi `analysis-api.ts`. HTTP client gửi `POST /api/v1/analyze` kèm `X-API-Key`, `model_id` (nếu có) và timeout 60 giây.
+5. `map-response.ts` chuyển `verdict` (`likely_true` → `Thật`, `likely_false` → `Giả`, `mixed` → `Thiếu ngữ cảnh`, `unverified` → `Không thể kiểm chứng`), quy đổi `confidence_score` sang phần trăm (`0–100`), tổng hợp `service_status` (`error` nếu có bất kỳ dịch vụ nào lỗi) và giữ nguyên `model_usage`. Handler ghi trạng thái `success` hoặc `error`.
+6. Side panel theo dõi `tabState_<tabId>` trong `chrome.storage.session` theo tab đang active và tự xóa badge `!` khi mở. Khi khởi tạo, panel cũng gọi `GET /api/v1/models` để điền bộ chọn model. Nút **Thử lại** gửi lại `ANALYZE_REQUEST` kèm `tabId` và handler đọc lại lựa chọn model mới nhất.
 
 `chrome.storage.session` hiện giữ trạng thái giao diện theo tab; **chưa có cache kết quả**. Không dùng biến toàn cục của service worker làm nơi lưu trạng thái cần giữ giữa các lần worker chạy.
 
@@ -102,7 +105,7 @@ Chi tiết phát triển, debug và kiểm tra thủ công: [`extension/README.m
 
 ### 2.2. Backend API (Server)
 - **Framework:** Python + FastAPI
-- **Kiến trúc API:** REST, 1 endpoint chính `POST /api/v1/analyze`
+- **Kiến trúc API:** `GET /health` kiểm tra tiến trình. `GET /api/v1/models` và `POST /api/v1/analyze` yêu cầu `X-API-Key`, trong đó giới hạn lượt phân tích chỉ áp dụng cho `POST /api/v1/analyze`.
 - **Cấu trúc thư mục thực tế:**
   ```
   backend/
@@ -111,7 +114,7 @@ Chi tiết phát triển, debug và kiểm tra thủ công: [`extension/README.m
   │   ├── api/
   │   │   ├── deps.py             # Dependency injection (orchestrator, rate limiter)
   │   │   └── v1/
-  │   │       └── analyze.py      # route /analyze
+  │   │       └── analyze.py      # route /analyze và /models
   │   ├── core/
   │   │   ├── config.py           # đọc env, settings
   │   │   ├── rate_limit.py       # rate limiter (chống spam)
@@ -120,7 +123,8 @@ Chi tiết phát triển, debug và kiểm tra thủ công: [`extension/README.m
   │   │   └── gemini_prompts.py   # Các mẫu prompt chi tiết cho Gemini
   │   ├── services/               # MODULE HOÁ theo từng nguồn dữ liệu
   │   │   ├── factcheck_service.py# gọi Google Fact Check Tools API
-  │   │   ├── gemini_service.py   # gọi Gemini API (phân tích/tóm tắt/đánh giá)
+  │   │   ├── gemini_service.py   # gọi Interactions API để trích xuất và đánh giá
+  │   │   ├── gemini_model_pool.py # cooldown theo model, dùng chung trong process
   │   │   ├── tavily_service.py   # gọi Tavily API (tìm kiếm nguồn tham khảo)
   │   │   └── base_service.py     # interface chung
   │   ├── orchestrator/
@@ -135,54 +139,67 @@ Chi tiết phát triển, debug và kiểm tra thủ công: [`extension/README.m
   ```
 
 - **Vì sao module hoá theo `services/` + `orchestrator/`:**
-  - Mỗi API bên ngoài (Fact Check, Gemini, Tavily) là 1 service độc lập, cùng implement 1 interface (`base_service.py`) → khi Fact Check API đổi version hoặc bạn muốn thay bằng API khác, chỉ sửa 1 file, không ảnh hưởng phần còn lại.
-  - `orchestrator` không biết chi tiết implementation của từng service, chỉ gọi qua interface chung → dễ thêm service mới (chỉ cần đăng ký thêm vào danh sách service mà orchestrator gọi).
-  - Đây là pattern chuẩn cho sản phẩm thương mại: tách "nguồn dữ liệu" (data source) khỏi "logic nghiệp vụ" (business logic).
+  - Fact Check và Tavily dùng chung `BaseService.check(ctx)` để tra cứu. `GeminiService` có hai phương thức riêng là `extract_claims` và `assess`.
+  - `get_orchestrator()` tạo các service cho từng request. Orchestrator điều phối pipeline, còn từng service xử lý HTTP/SDK và chuyển kết quả về kiểu dữ liệu nội bộ.
 
-### 2.3. Luồng xử lý tại Orchestrator (logic lõi - Đã cập nhật v0.2)
+### 2.3. Luồng xử lý tại Orchestrator
 1. **Giai đoạn 0 (Trích xuất & Lọc):**
-   - `gemini_service.extract_claims` phân tích văn bản để tìm claim chính, ngôn ngữ và các câu query tối ưu.
-   - Nếu `is_checkable=false` (không có yếu tố kiểm chứng được như ý kiến cá nhân, câu hỏi) -> trả ngay verdict "unverified" kèm giải thích, không gọi tiếp API để tiết kiệm chi phí.
+   - `gemini_service.extract_claims` tìm khẳng định chính (`main_claim`), ngôn ngữ (`detected_lang`), tối đa 3 truy vấn tìm kiếm (`search_queries`) và cờ `is_checkable`. Bước này có timeout 20 giây ở orchestrator (15 giây mỗi lượt gọi SDK, tối đa 2 lần thử).
+   - Nếu trích xuất lỗi hoặc rỗng → trả ngay `unverified` (`confidence_score=0.0`, `service_status.gemini="error"`).
+   - Nếu `is_checkable=false` (không có yếu tố kiểm chứng được như ý kiến cá nhân, câu hỏi, quảng cáo) → trả ngay verdict `unverified` (`confidence_score=0.0`) kèm giải thích, không gọi tiếp API để tiết kiệm chi phí.
 2. **Giai đoạn 1 (Thu thập bằng chứng):**
-   - Gọi song song (`asyncio.gather`):
-     - `factcheck_service`: tìm claim đã được fact-check trước đó.
-     - `tavily_service`: tìm kiếm nguồn tin tức/bài viết liên quan đối chiếu.
+   - Gọi song song bằng `asyncio.gather` với timeout 15 giây cho cả nhóm và `@safe_execute(timeout_seconds=10.0)` cho mỗi service:
+     - `factcheck_service`: truy vấn `claims:search` (`pageSize=10`) với `languageCode=ctx.lang`; nếu rỗng và có `ctx.lang` thì tự động thử lại 1 lần không giới hạn ngôn ngữ. Tự suy luận `stance` (`supports`, `refutes`, `neutral`) từ `textualRating`.
+     - `tavily_service`: tìm kiếm `POST /search` (`search_depth="basic"`, `max_results=5`, hỗ trợ `tavily_include_domains`/`tavily_exclude_domains`), trích xuất tên miền làm `publisher` và cắt gọn `snippet` tối đa 300 ký tự.
 3. **Giai đoạn 2 (Đánh giá tổng hợp):**
-   - `gemini_service.assess`: nhận toàn bộ sources thu thập được từ Giai đoạn 1 và thực hiện đánh giá cuối cùng.
-   - Orchestrator áp dụng các quy tắc:
-     - Ưu tiên nguồn từ Fact Check: nếu có kết quả rõ ràng, chỉnh lại confidence và đưa lên đầu danh sách sources.
-     - Lọc trùng URL, giới hạn tối đa 8 nguồn.
-     - Xử lý lỗi linh hoạt (degraded result) nếu 1 service sập, hoặc timeout.
-     - Đảm bảo nhất quán giữa `verdict` và `confidence_score`.
-4. Tổng hợp kết quả → trả về:
+   - Orchestrator xếp nguồn Fact Check trước Tavily, loại URL trùng và giữ tối đa 8 nguồn. Nếu không có nguồn nào, trả ngay `unverified` với `confidence_score=0.3` mà không gọi bước đánh giá của Gemini.
+   - `gemini_service.assess` đánh giá các nguồn thu được (timeout 20 giây, tối đa 2 lần thử). Gemini dùng structured output (JSON schema) ở cả hai bước, kiểm tra bằng Pydantic và lọc bỏ mọi URL trong `source_stances` không nằm trong tập bằng chứng (`valid_urls`).
+   - Orchestrator áp dụng các quy tắc hậu xử lý:
+     - Cập nhật `stance` của từng nguồn theo kết quả đánh giá từ Gemini.
+     - **Ưu tiên Fact Check:** Nếu nguồn Fact Check đầu tiên (`factcheck_res.sources[:1]`) có `stance="supports"` hoặc `"refutes"`, ép `verdict` về `"likely_true"` hoặc `"likely_false"` tương ứng và nâng `confidence_score = max(confidence_score, 0.8)`.
+     - **Ràng buộc nhất quán:** Nếu `verdict` là `"likely_true"` hoặc `"likely_false"` mà `confidence_score < 0.5` thì nâng lên `0.5`; nếu `verdict == "unverified"` thì giới hạn `confidence_score = min(confidence_score, 0.4)`.
+     - **Xử lý lỗi linh hoạt (degraded result):** Nếu 1 service tra cứu lỗi hoặc timeout, pipeline vẫn tiếp tục với nguồn còn lại và phản ánh qua `service_status`.
+4. Trả về `verdict`, `confidence_score`, `explanation`, `sources`, `service_status` và `model_usage`. Ví dụ khi model ưu tiên chạm quota ở bước đánh giá:
    ```json
    {
-     "verdict": "likely_false | likely_true | unverified | mixed",
-     "confidence_score": 0.0,
-     "explanation": "Giải thích ngắn gọn tại sao",
+     "verdict": "likely_true",
+     "confidence_score": 0.8,
+     "explanation": "Nguồn tham khảo ủng hộ khẳng định.",
      "sources": [
-       {"title": "...", "url": "...", "publisher": "...", "relevance": "..."}
+       {"title": "Bài kiểm chứng", "url": "https://example.com/fact-check", "publisher": "Example", "snippet": null, "stance": "supports"}
      ],
      "service_status": {
-        "factcheck": "ok|error|empty",
-        "tavily": "ok|error|empty",
-        "gemini": "ok|error|empty"
+       "factcheck": "ok",
+       "tavily": "empty",
+       "gemini": "ok"
+     },
+     "model_usage": {
+       "requested_model": "gemini-3.1-flash-lite",
+       "extraction_model": "gemini-3.1-flash-lite",
+       "assessment_model": "gemini-3.5-flash",
+       "fallbacks": [{"stage": "assessment", "model": "gemini-3.1-flash-lite", "reason": "quota"}]
      }
    }
    ```
+
+### 2.4. Chọn model Gemini và xử lý quota
+
+`GEMINI_MODEL` xác định model mặc định và `GEMINI_MODELS` bổ sung các model theo thứ tự. `GET /api/v1/models` trả danh sách đã loại tên trùng. `POST /api/v1/analyze` dùng `model_id` nếu được cung cấp và trả `422` nếu model đó nằm ngoài danh sách.
+
+Mỗi bước Gemini bắt đầu từ model ưu tiên, thử theo vòng và bỏ qua model đang cooldown. HTTP `429` từ Gemini kích hoạt cooldown dùng chung theo model trong process. Nếu cả danh sách hết quota, endpoint phân tích trả `503` cùng `Retry-After`. Nếu bước đánh giá chuyển model, kết quả trích xuất đã có vẫn được sử dụng. Xem chi tiết biến môi trường và cách tính cooldown trong [hướng dẫn backend](backend/README.md#chọn-model-và-chuyển-model-khi-hết-quota).
 
 ## 3. Bảo mật (quan trọng — đọc kỹ trước khi code)
 
 | Vấn đề | Giải pháp |
 |---|---|
-| API key (Gemini, Tavily, Fact Check) | **Chỉ lưu ở backend** (biến môi trường `.env`, không commit). Extension không bao giờ chứa API key. |
-| Giao tiếp Extension ↔ Backend | Bắt buộc HTTPS. Xác thực bằng token/API key riêng của extension (không phải key của Gemini/Tavily) để tránh backend bị lạm dụng bởi bên thứ ba. |
-| Rate limiting | Backend giới hạn số request/IP hoặc /extension-instance để tránh spam, tốn quota API trả phí. |
-| Dữ liệu người dùng | Ở bản demo: **không lưu** nội dung bài đăng, xử lý real-time rồi trả kết quả, không ghi log nội dung text đầy đủ — chỉ log metadata (thời gian, độ dài text, kết quả). |
-| CORS | Backend chỉ chấp nhận request có origin là extension ID cụ thể, không mở public cho mọi origin. |
-| Input validation | Giới hạn độ dài text gửi lên (tránh lạm dụng), sanitize input trước khi gửi tới các API ngoài. |
+| API key (Gemini, Tavily, Fact Check) | Chỉ cấu hình ở backend qua biến môi trường hoặc `backend/.env`. |
+| Giao tiếp Extension ↔ Backend | Local dùng HTTP trên loopback. Khi triển khai, cấu hình HTTPS ở tầng phục vụ backend. Extension gửi key riêng qua `X-API-Key`. |
+| Rate limiting | Backend đếm lượt phân tích theo IP, theo key và theo tổng lượt trong process. |
+| Dữ liệu người dùng | Backend xử lý theo request, extension giữ nội dung và kết quả theo tab trong `chrome.storage.session` để hiển thị và thử lại. Xem giới hạn ghi log trong [checklist bảo mật](SECURITY_CHECKLIST.md). |
+| CORS | Backend bật CORS khi có `ALLOWED_ORIGINS`. Mỗi origin của extension có dạng `chrome-extension://<extension-id>`. |
+| Input validation | Backend kiểm tra độ dài văn bản và giới hạn `Content-Length`. Prompt Gemini đặt văn bản trong thẻ `<post>` và kiểm tra JSON đầu ra. |
 
-> **Giả định của Claude:** Vì bản demo "chưa cần database", token xác thực giữa extension–backend có thể dùng 1 static API key nhúng vào extension lúc build (chấp nhận được cho demo nội bộ, **không dùng cách này khi phát hành công khai** — khi đó cần OAuth hoặc issued token per install). Xác nhận lại nếu bạn muốn làm chuẩn hơn ngay từ đầu.
+Key tĩnh `VITE_EXTENSION_API_KEY` được nhúng vào bundle khi build và có thể đọc được từ extension. Xác thực bằng token cấp động nằm trong [roadmap phát hành](ROADMAP.md).
 
 ## 4. Các API bên ngoài sử dụng (bản demo)
 
@@ -196,6 +213,7 @@ Chi tiết phát triển, debug và kiểm tra thủ công: [`extension/README.m
 - Chưa có database → không lưu lịch sử, không cache → mỗi lần phân tích đều tốn API call thật (cân nhắc thêm cache ở bản sau để tiết kiệm chi phí).
 - Hỗ trợ Facebook và Reddit; DOM selector có thể hỏng khi nền tảng đổi giao diện → cần thiết kế adapter dễ sửa (mục 2.1).
 - Static API key giữa extension–backend chưa đủ an toàn cho production.
+- Bộ đếm lượt phân tích và cooldown Gemini nằm trong bộ nhớ của từng process và mất khi process khởi động lại.
 - Google Fact Check Tools API có độ phủ dữ liệu tiếng Việt còn hạn chế, có thể thường xuyên trả về trạng thái rỗng ("empty") khi truy vấn nội dung tiếng Việt.
 
 ## 6. Định hướng mở rộng (đã tính trước trong kiến trúc)

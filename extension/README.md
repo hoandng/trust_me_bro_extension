@@ -15,7 +15,9 @@ npm test           # API và Chrome Storage được mock; không gọi dịch v
 npm run build
 ```
 
-Dùng Node.js đáp ứng yêu cầu của Vite/ESLint trong lockfile (Node 22.13+ hoặc Node 24+). Sao chép `.env.example` thành `.env` và cấu hình backend nếu cần. Không đưa API key Gemini/Tavily/Google Fact Check vào extension.
+Dùng Node.js 20.19+ (nhánh 20), 22.13+ (nhánh 22) hoặc 24+ theo lockfile. Sao chép `.env.example` thành `.env` và đặt `VITE_EXTENSION_API_KEY` bằng `EXTENSION_API_KEY` của backend. API key Gemini, Tavily và Google Fact Check được cấu hình ở backend.
+
+`VITE_BACKEND_URL` đặt URL gọi API, mặc định là `http://127.0.0.1:8000`. Nếu dùng origin khác, cấu hình match pattern tương ứng trong `host_permissions` của `vite.config.ts` và kiểm tra `dist/manifest.json` sau khi build. Vite config hiện đọc `process.env.VITE_BACKEND_URL` trực tiếp để tạo manifest, nên thay đổi URL chỉ trong `extension/.env` không cập nhật quyền truy cập trong manifest.
 
 **Tương thích toolchain:** TypeScript dùng dải `~6.0.3`, phù hợp với yêu cầu `>=4.8.4 <6.1.0` của `typescript-eslint` hiện tại. Giữ `package.json` và `package-lock.json` đồng bộ; cài bằng `npm ci`. Khi nâng TypeScript lên phiên bản minor/major mới, kiểm tra peer dependency của ESLint trước khi cập nhật.
 
@@ -37,6 +39,7 @@ src/
 │   └── analysis/
 │       ├── types.ts
 │       ├── state-store.ts
+│       ├── model-preference.ts
 │       ├── background/
 │       │   ├── handle-analysis.ts
 │       │   ├── analysis-api.ts
@@ -63,9 +66,10 @@ src/
 | `features/analysis/types.ts` | Kiểu request, response backend, dữ liệu UI và trạng thái phân tích |
 | `features/analysis/background/` | Điều phối yêu cầu, chọn endpoint, chuyển dữ liệu backend sang UI |
 | `features/analysis/state-store.ts` | Quy ước khóa `tabState_<tabId>` và subscription của tính năng |
+| `features/analysis/model-preference.ts` | Đọc và ghi `preferredGeminiModel` trong `chrome.storage.local` |
 | `features/analysis/content/` | Theo dõi lựa chọn, adapter nền tảng, nút nổi/nút bài viết |
-| `features/analysis/sidepanel/controller.ts` | Đổi tab, theo dõi trạng thái, yêu cầu retry |
-| `features/analysis/sidepanel/render.ts` | Render DOM, loading, nguồn và sao chép kết quả |
+| `features/analysis/sidepanel/controller.ts` | Đổi tab, theo dõi trạng thái, yêu cầu retry và tải danh sách model |
+| `features/analysis/sidepanel/render.ts` | Render DOM, loading, nguồn, thông tin model và sao chép kết quả |
 | `infrastructure/` | HTTP, xác thực backend, timeout và adapter Chrome Storage |
 | `shared/` | Hợp đồng message, kiểm tra message đầu vào và cấu hình chung |
 
@@ -111,6 +115,7 @@ Background mở side panel ngay khi nhận message; handler lưu request để r
 | Không hiện nút/chọn sai nội dung | DevTools của trang → selection controller, adapter và floating button |
 | Không nhận yêu cầu/không mở panel | `chrome://extensions` → Inspect service worker → entrypoint và `handle-analysis.ts` |
 | Request lỗi hoặc kết quả sai định dạng | Network của service worker → `backend-client.ts`, `analysis-api.ts`, `map-response.ts` |
+| Bộ chọn model không tải được | Network của side panel → `GET /api/v1/models`. Kiểm tra URL, quyền truy cập backend và key `X-API-Key`. |
 | UI không cập nhật hoặc lẫn tab | DevTools side panel → controller; kiểm tra `tabState_<tabId>` trong extension storage |
 | UI hiển thị sai | `render.ts` và `index.css`; dùng `textContent` với dữ liệu bên ngoài |
 
@@ -118,7 +123,7 @@ Log chỉ ghi metadata như nền tảng, độ dài văn bản và trạng thá
 
 ## Xác minh
 
-`npm test` dùng Node test runner và Vite đã có sẵn để chạy TypeScript. Build test chỉ dùng cấu hình giả, không đọc `.env`; artifact nằm trong `.cache/tests/`. Test kiểm tra hợp đồng message, mapping response, subscription/trạng thái độc lập giữa các tab và luồng loading → success/error khi gọi API mock.
+`npm test` dùng Node test runner và Vite để chạy TypeScript. Build test dùng cấu hình giả và ghi artifact vào `.cache/tests/`. Test kiểm tra hợp đồng message, mapping response, trạng thái độc lập giữa các tab, luồng loading → success/error, model ưu tiên trong request và thông báo khi hết quota.
 
 Kiểm tra thủ công sau khi reload extension:
 
@@ -128,15 +133,19 @@ Kiểm tra thủ công sau khi reload extension:
 4. Tắt backend hoặc tạo lỗi API: kiểm tra thông báo lỗi và nút Thử lại.
 5. Kiểm tra Xem thêm/Thu gọn, link nguồn, thanh confidence và Sao chép kết quả.
 6. Nếu Chrome chặn mở panel từ message, badge `!` xuất hiện; bấm icon extension để mở panel.
+7. Chọn một model khác, phân tích hoặc bấm **Thử lại**, rồi kiểm tra `model_id` trong request và thông tin model trong kết quả. Chọn **Mặc định** để dùng cấu hình server.
 
 ## Chọn model Gemini
 
-Bộ chọn model nằm phía trên side panel, lấy danh sách từ backend. Khi chưa có lựa
+Bộ chọn ở đầu side panel tải danh sách qua `GET /api/v1/models`. Khi chưa có lựa
 chọn, lần phân tích đầu dùng model mặc định của server. Lựa chọn được lưu trong
 `chrome.storage.local` và áp dụng cho các lần phân tích tiếp theo, kể cả khi mở lại
-trình duyệt. Chọn “Mặc định” để quay về cấu hình server.
+trình duyệt. Chọn **Mặc định** để quay về cấu hình server. Khi panel tải được danh
+sách mới và model đã lưu bị gỡ khỏi danh sách, panel xóa lựa chọn cũ. Nếu tải danh
+sách thất bại, bộ chọn bị vô hiệu hóa và lựa chọn đã lưu vẫn được giữ.
 
 Đổi lựa chọn không gửi lại nội dung và không thay model của request đang chạy.
-Nút “Thử lại” dùng lựa chọn mới nhất. Kết quả hiển thị model thực tế cho trích xuất,
-đánh giá và thông báo nếu đã tự chuyển do quota; fallback không ghi đè lựa chọn.
-Sau khi build, reload extension tại `chrome://extensions` để cập nhật giao diện.
+Nút **Thử lại** dùng lựa chọn mới nhất. Kết quả hiển thị model thực tế cho trích xuất,
+đánh giá và thông báo nếu backend đã bỏ qua hoặc chuyển model do quota. Lựa chọn
+đã lưu vẫn được dùng làm model ưu tiên ở lượt tiếp theo. Nếu tất cả model chạm hạn
+mức, backend trả `503` và panel hiển thị thông báo hết hạn mức. Xem [cách backend xử lý quota](../backend/README.md#chọn-model-và-chuyển-model-khi-hết-quota).
