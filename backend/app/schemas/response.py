@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class Source(BaseModel):
@@ -9,11 +9,17 @@ class Source(BaseModel):
     publisher: str | None = None
     snippet: str | None = None
     stance: Literal["supports", "refutes", "neutral"] | None = None
+    original_stance: Literal["supports", "refutes", "neutral"] | None = Field(
+        default=None, frozen=True
+    )
+    claim_text: str | None = None
+
 
 class ServiceStatus(BaseModel):
     factcheck: Literal["ok", "error", "empty"]
     tavily: Literal["ok", "error", "empty"]
     gemini: Literal["ok", "error", "empty"]
+
 
 class ModelFallback(BaseModel):
     stage: str

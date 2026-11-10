@@ -41,6 +41,7 @@ Mục tiêu: extension dùng được mượt mà, xử lý lỗi tốt, sẵn s
 - [x] Giới hạn độ dài văn bản được phép gửi phân tích + thông báo rõ cho người dùng
 - [x] Ghi metadata của lượt phân tích để debug và theo dõi usage, với giới hạn ghi log được ghi trong [checklist bảo mật](SECURITY_CHECKLIST.md)
 - [x] Viết test tự động cho backend (mock 3 API ngoài)
+- [x] A1: Chuẩn hóa rating Fact Check tiếng Anh và tiếng Việt, giữ stance gốc và chỉ cho phép nguồn Fact Check đầu tiên đổi verdict khi khớp khẳng định. Có test hồi quy cho `Not true`, stance gốc và điều kiện khớp claim.
 
 ## Milestone 3: Nâng cấp tính năng (theo yêu cầu ban đầu)
 

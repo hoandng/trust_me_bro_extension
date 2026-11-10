@@ -1,37 +1,97 @@
-import httpx
-from typing import Optional, List, Dict, Any
+import re
+import unicodedata
+from typing import Any
 
+import httpx
+
+from app.core.config import settings
 from app.schemas.internal import AnalysisContext, ServiceResult
 from app.schemas.response import Source
 from app.services.base_service import BaseService, safe_execute
-from app.core.config import settings
+
+# Tra cứu toàn nhãn để không nhầm phủ định hoặc mức độ với từ "true".
+RATING_GROUPS = {
+    "supports": (
+        "true",
+        "accurate",
+        "correct",
+        "mostly true",
+        "mostly accurate",
+        "đúng",
+        "đúng sự thật",
+        "chính xác",
+        "phần lớn đúng",
+        "hầu hết đúng",
+    ),
+    "refutes": (
+        "false",
+        "fake",
+        "pants on fire",
+        "misleading",
+        "incorrect",
+        "untrue",
+        "hoax",
+        "not true",
+        "not accurate",
+        "not correct",
+        "mostly false",
+        "mostly inaccurate",
+        "sai",
+        "sai sự thật",
+        "không đúng",
+        "không chính xác",
+        "tin giả",
+        "giả mạo",
+        "gây hiểu lầm",
+        "phần lớn sai",
+        "hầu hết sai",
+    ),
+    "neutral": (
+        "partly true",
+        "partially true",
+        "half true",
+        "partly false",
+        "half false",
+        "partially false",
+        "partly accurate",
+        "mixed",
+        "missing context",
+        "out of context",
+        "unverified",
+        "unproven",
+        "đúng một phần",
+        "sai một phần",
+        "nửa đúng nửa sai",
+        "thiếu ngữ cảnh",
+        "ngoài ngữ cảnh",
+        "chưa kiểm chứng",
+    ),
+}
+RATING_LOOKUP = {
+    rating: stance for stance, ratings in RATING_GROUPS.items() for rating in ratings
+}
+
 
 class FactCheckService(BaseService):
-    def __init__(self, client: Optional[httpx.AsyncClient] = None):
+    def __init__(self, client: httpx.AsyncClient | None = None):
         # Allow passing an existing client for lifespan reuse
         self._client = client or httpx.AsyncClient(timeout=10.0)
-        
+
     @property
     def name(self) -> str:
         return "factcheck"
-        
+
     async def aclose(self):
         if self._client:
             await self._client.aclose()
 
     def _determine_stance(self, rating: str) -> str:
-        if not rating:
-            return "neutral"
-        r = rating.lower()
-        if any(w in r for w in ["false", "fake", "pants on fire", "misleading", "incorrect", "untrue", "hoax"]):
-            return "refutes"
-        if "true" in r and "untrue" not in r and "half true" not in r and "mostly true" not in r:
-            return "supports"
-        if "mostly true" in r:
-             return "supports"
-        return "neutral"
+        normalized = unicodedata.normalize("NFC", rating or "").casefold()
+        normalized = re.sub(r"[-‐‑–—]", " ", normalized)
+        normalized = " ".join(normalized.split()).strip(" .!?:;")
+        return RATING_LOOKUP.get(normalized, "neutral")
 
-    def _parse_claims(self, claims: List[Dict[str, Any]]) -> List[Source]:
+    def _parse_claims(self, claims: list[dict[str, Any]]) -> list[Source]:
         sources = []
         for claim in claims:
             # We look at claimReview array
@@ -39,20 +99,24 @@ class FactCheckService(BaseService):
             for review in reviews:
                 publisher_info = review.get("publisher", {})
                 publisher_name = publisher_info.get("name", "Unknown")
-                
+
                 url = review.get("url", "")
                 title = review.get("title", claim.get("text", ""))
                 rating = review.get("textualRating", "")
-                
+
                 if url:
                     stance = self._determine_stance(rating)
-                    sources.append(Source(
-                        title=title,
-                        url=url,
-                        publisher=publisher_name,
-                        snippet=rating,
-                        stance=stance
-                    ))
+                    sources.append(
+                        Source(
+                            title=title,
+                            url=url,
+                            publisher=publisher_name,
+                            snippet=rating,
+                            stance=stance,
+                            original_stance=stance,
+                            claim_text=claim.get("text"),
+                        )
+                    )
         return sources
 
     @safe_execute(timeout_seconds=10.0)
@@ -64,31 +128,23 @@ class FactCheckService(BaseService):
             query = ctx.claim
         else:
             query = ctx.text[:500]
-            
+
         if not query.strip():
-             return ServiceResult(
-                service=self.name,
-                status="empty",
-                sources=[]
-            )
+            return ServiceResult(service=self.name, status="empty", sources=[])
 
         api_key = settings.factcheck_api_key
         if not api_key:
             return ServiceResult(
                 service=self.name,
                 status="error",
-                error="FactCheck API key not configured"
+                error="FactCheck API key not configured",
             )
 
         url = "https://factchecktools.googleapis.com/v1alpha1/claims:search"
-        
+
         # Try with language first if provided
-        params = {
-            "key": api_key,
-            "query": query,
-            "pageSize": 10
-        }
-        
+        params = {"key": api_key, "query": query, "pageSize": 10}
+
         if ctx.lang:
             params["languageCode"] = ctx.lang
 
@@ -96,9 +152,9 @@ class FactCheckService(BaseService):
             response = await self._client.get(url, params=params)
             response.raise_for_status()
             data = response.json()
-            
+
             claims = data.get("claims", [])
-            
+
             # If empty and we used language code, retry without language code
             if not claims and ctx.lang:
                 params.pop("languageCode", None)
@@ -106,42 +162,27 @@ class FactCheckService(BaseService):
                 response.raise_for_status()
                 data = response.json()
                 claims = data.get("claims", [])
-                
+
             if not claims:
-                return ServiceResult(
-                    service=self.name,
-                    status="empty",
-                    sources=[]
-                )
-                
+                return ServiceResult(service=self.name, status="empty", sources=[])
+
             sources = self._parse_claims(claims)
-            
+
             if not sources:
-                 return ServiceResult(
-                    service=self.name,
-                    status="empty",
-                    sources=[]
-                )
-                 
-            return ServiceResult(
-                service=self.name,
-                status="ok",
-                sources=sources
-            )
-            
+                return ServiceResult(service=self.name, status="empty", sources=[])
+
+            return ServiceResult(service=self.name, status="ok", sources=sources)
+
         except httpx.HTTPStatusError as e:
             # Mask API key in error message
             error_msg = str(e).replace(api_key, "***")
             return ServiceResult(
                 service=self.name,
                 status="error",
-                error=f"HTTP Error: {e.response.status_code} - {error_msg}"
+                error=f"HTTP Error: {e.response.status_code} - {error_msg}",
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - Service boundary returns degraded results.
             error_msg = str(e).replace(api_key, "***")
             return ServiceResult(
-                service=self.name,
-                status="error",
-                error=f"Request failed: {error_msg}"
+                service=self.name, status="error", error=f"Request failed: {error_msg}"
             )
-

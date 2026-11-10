@@ -149,14 +149,14 @@ Chi tiết phát triển, debug và kiểm tra thủ công: [`extension/README.m
    - Nếu `is_checkable=false` (không có yếu tố kiểm chứng được như ý kiến cá nhân, câu hỏi, quảng cáo) → trả ngay verdict `unverified` (`confidence_score=0.0`) kèm giải thích, không gọi tiếp API để tiết kiệm chi phí.
 2. **Giai đoạn 1 (Thu thập bằng chứng):**
    - Gọi song song bằng `asyncio.gather` với timeout 15 giây cho cả nhóm và `@safe_execute(timeout_seconds=10.0)` cho mỗi service:
-     - `factcheck_service`: truy vấn `claims:search` (`pageSize=10`) với `languageCode=ctx.lang`; nếu rỗng và có `ctx.lang` thì tự động thử lại 1 lần không giới hạn ngôn ngữ. Tự suy luận `stance` (`supports`, `refutes`, `neutral`) từ `textualRating`.
+     - `factcheck_service` truy vấn `claims:search` (`pageSize=10`) với `languageCode=ctx.lang`. Nếu kết quả rỗng và có `ctx.lang`, service thử lại một lần không giới hạn ngôn ngữ. Service chuẩn hóa `textualRating` rồi tra toàn bộ nhãn trong bảng rating tiếng Anh và tiếng Việt. Ví dụ, `Not true` và `sai sự thật` cho `refutes`, `Mostly True` cho `supports`, còn `Half True`, `thiếu ngữ cảnh` và nhãn chưa nhận diện cho `neutral`. Mỗi nguồn Fact Check giữ kết quả tra cứu trong `original_stance` và lấy `claim_text` từ `text` của claim mà Google trả về.
      - `tavily_service`: tìm kiếm `POST /search` (`search_depth="basic"`, `max_results=5`, hỗ trợ `tavily_include_domains`/`tavily_exclude_domains`), trích xuất tên miền làm `publisher` và cắt gọn `snippet` tối đa 300 ký tự.
 3. **Giai đoạn 2 (Đánh giá tổng hợp):**
    - Orchestrator xếp nguồn Fact Check trước Tavily, loại URL trùng và giữ tối đa 8 nguồn. Nếu không có nguồn nào, trả ngay `unverified` với `confidence_score=0.3` mà không gọi bước đánh giá của Gemini.
-   - `gemini_service.assess` đánh giá các nguồn thu được (timeout 20 giây, tối đa 2 lần thử). Gemini dùng structured output (JSON schema) ở cả hai bước, kiểm tra bằng Pydantic và lọc bỏ mọi URL trong `source_stances` không nằm trong tập bằng chứng (`valid_urls`).
+   - `gemini_service.assess` đánh giá các nguồn thu được (timeout 20 giây, tối đa 2 lần thử). Gemini dùng structured output (JSON schema) ở cả hai bước. Backend kiểm tra kết quả bằng Pydantic và lọc bỏ URL trong `source_stances` nếu URL đó không nằm trong tập bằng chứng. Với mỗi nguồn Fact Check, prompt yêu cầu Gemini trả `factcheck_match=true` khi `claim_text` và khẳng định trích xuất từ bài đăng diễn đạt cùng một mệnh đề. Nếu thiếu cờ này, backend mặc định `false`. `factcheck_match` là trường nội bộ của bước đánh giá.
    - Orchestrator áp dụng các quy tắc hậu xử lý:
-     - Cập nhật `stance` của từng nguồn theo kết quả đánh giá từ Gemini.
-     - **Ưu tiên Fact Check:** Nếu nguồn Fact Check đầu tiên (`factcheck_res.sources[:1]`) có `stance="supports"` hoặc `"refutes"`, ép `verdict` về `"likely_true"` hoặc `"likely_false"` tương ứng và nâng `confidence_score = max(confidence_score, 0.8)`.
+     - Chỉ cập nhật `stance` của nguồn Tavily theo kết quả Gemini. Nguồn Fact Check giữ stance từ rating, kể cả khi trùng URL với nguồn Tavily.
+     - **Ưu tiên Fact Check.** Orchestrator chỉ xét nguồn Fact Check đầu tiên khi bước đánh giá thành công, `claim_text` không rỗng và `factcheck_match=true` cho đúng URL của nguồn đó. Nếu `original_stance` là `supports` hoặc `refutes`, verdict ưu tiên tương ứng là `likely_true` hoặc `likely_false`. Khi verdict thực sự thay đổi, nâng `confidence_score` lên ít nhất `0.8`.
      - **Ràng buộc nhất quán:** Nếu `verdict` là `"likely_true"` hoặc `"likely_false"` mà `confidence_score < 0.5` thì nâng lên `0.5`; nếu `verdict == "unverified"` thì giới hạn `confidence_score = min(confidence_score, 0.4)`.
      - **Xử lý lỗi linh hoạt (degraded result):** Nếu 1 service tra cứu lỗi hoặc timeout, pipeline vẫn tiếp tục với nguồn còn lại và phản ánh qua `service_status`.
 4. Trả về `verdict`, `confidence_score`, `explanation`, `sources`, `service_status` và `model_usage`. Ví dụ khi model ưu tiên chạm quota ở bước đánh giá:
@@ -166,7 +166,15 @@ Chi tiết phát triển, debug và kiểm tra thủ công: [`extension/README.m
      "confidence_score": 0.8,
      "explanation": "Nguồn tham khảo ủng hộ khẳng định.",
      "sources": [
-       {"title": "Bài kiểm chứng", "url": "https://example.com/fact-check", "publisher": "Example", "snippet": null, "stance": "supports"}
+       {
+         "title": "Bài kiểm chứng",
+         "url": "https://example.com/fact-check",
+         "publisher": "Example",
+         "snippet": "True",
+         "stance": "supports",
+         "original_stance": "supports",
+         "claim_text": "Khẳng định được bài kiểm chứng đánh giá."
+       }
      ],
      "service_status": {
        "factcheck": "ok",
