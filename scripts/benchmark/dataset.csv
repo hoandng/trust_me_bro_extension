@@ -1,0 +1,11 @@
+id,text,label,topic,source_url,date
+sample-01,Quả cam có chứa vitamin C.,true,health,https://example.invalid/benchmark/01,2026-11-01
+sample-02,Cơ thể người trưởng thành chỉ có đúng một chiếc răng.,false,health,https://example.invalid/benchmark/02,2026-11-01
+sample-03,Cơ quan Quà Tặng Sao Bạc công bố chương trình mới sáng nay.,unverified,scam,https://example.invalid/benchmark/03,2026-11-02
+sample-04,"Mã OTP dùng để xác thực, và bất kỳ ai có mã OTP đều là chủ tài khoản.",mixed,scam,https://example.invalid/benchmark/04,2026-11-02
+sample-05,Lãi suất 5% một năm trên 100 đồng tương ứng 5 đồng tiền lãi trong một năm.,true,finance,https://example.invalid/benchmark/05,2026-11-03
+sample-06,"Giảm 10% từ 100 xuống 90, rồi tăng 10% từ 90 sẽ trở lại đúng 100.",mixed,finance,https://example.invalid/benchmark/06,2026-11-03
+sample-07,Động đất có thể tạo ra sóng thần dưới những điều kiện nhất định.,true,disaster,https://example.invalid/benchmark/07,2026-11-04
+sample-08,Huyện giả định Nam Vân ghi nhận trận lũ lớn nhất năm vào sáng nay.,unverified,disaster,https://example.invalid/benchmark/08,2026-11-04
+sample-09,Trái Đất là vệ tinh tự nhiên của Mặt Trăng.,false,other,https://example.invalid/benchmark/09,2026-11-05
+sample-10,Hình tam giác có bốn cạnh bằng nhau.,false,other,https://example.invalid/benchmark/10,2026-11-05

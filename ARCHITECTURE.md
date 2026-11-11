@@ -208,6 +208,10 @@ Lifespan khởi tạo `backend/data/metrics.db` bằng `sqlite3`. Backend ghi m�
 
 `POST /api/v1/feedback` cập nhật một phản hồi cho mỗi UUID đã có verdict. `GET /api/v1/stats/summary` tổng hợp trực tiếp từ SQLite. Tỷ lệ verdict chia theo số lượt có verdict. Độ trễ trung bình và p95 tính trên mọi lượt đã ghi. p95 lấy giá trị tại vị trí `ceil(0.95 × n)` sau khi sắp xếp. Chi phí trung bình chia theo số lượt ước tính được và tỷ lệ helpful chia theo số lượt đã phản hồi.
 
+### 2.6. Benchmark theo dataset
+
+`scripts/benchmark/` chạy bốn chế độ `llm_only`, `factcheck_only`, `llm_factcheck` và `full` trên cùng dataset CSV. Hai chế độ có Gemini và nguồn dùng lại orchestrator. `llm_factcheck` bỏ qua Tavily. Runner dùng bộ đo chi phí B1, cache kết quả theo mẫu–chế độ trong SQLite riêng và xuất báo cáo cùng phiếu chấm citation. Xem [hướng dẫn benchmark](scripts/benchmark/README.md).
+
 ## 3. Bảo mật (quan trọng — đọc kỹ trước khi code)
 
 | Vấn đề | Giải pháp |

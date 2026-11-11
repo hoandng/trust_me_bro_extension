@@ -45,6 +45,7 @@ Mục tiêu: extension dùng được mượt mà, xử lý lỗi tốt, sẵn s
 - [x] A2. Tra cứu song song tối đa hai truy vấn với trần request, xếp nguồn theo tier và dùng ngày xuất bản để đánh giá dấu hiệu tin cũ đăng lại. Có test mock cho fallback, giới hạn request, thứ tự nguồn và ngày xuất bản.
 - [x] A3. Dùng chung kết nối theo lifespan, giới hạn theo IP đã xác minh qua proxy, áp ngân sách phân tích mặc định 25 giây và ghi thời gian từng bước.
 - [x] B1. Ghi số liệu và phản hồi vào SQLite theo UUID, có API tổng hợp dành cho admin và kiểm thử nội dung gốc không đi vào kho lưu trữ.
+- [x] B2. Khung benchmark bốn chế độ với dataset mẫu, báo cáo chất lượng và chi phí, cache và phiếu chấm nguồn. Có test chạy toàn bộ mẫu bằng mock.
 
 ## Milestone 3: Nâng cấp tính năng (theo yêu cầu ban đầu)
 

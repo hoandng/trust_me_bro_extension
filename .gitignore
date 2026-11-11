@@ -49,6 +49,7 @@ logs/
 scaffold.py
 /backend/data/metrics.db
 /backend/data/metrics.db-*
+/scripts/benchmark/results/
 
 # OS specific
 Thumbs.db
