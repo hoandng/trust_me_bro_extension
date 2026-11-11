@@ -6,6 +6,7 @@
 import secrets
 from ipaddress import IPv4Address, IPv6Address, ip_address
 
+from app.core.analysis_cache import AnalysisCache
 from app.core.config import settings
 from app.core.metrics import MetricsStore
 from app.orchestrator.analysis_orchestrator import AnalysisOrchestrator
@@ -73,7 +74,7 @@ def _rate_limit_ip(request: Request) -> str:
     return str(peer_address)
 
 
-def verify_api_key(
+def verify_ip_limit(
     request: Request, api_key: str = Depends(authenticate_api_key)
 ) -> str:
     from app.core.rate_limit import limiter
@@ -87,8 +88,12 @@ def verify_api_key(
             detail="Too Many Requests",
             headers={"Retry-After": str(ip_retry)},
         )
+    return api_key
 
-    # Rate limit by Key
+
+def enforce_daily_key_limit(api_key: str) -> None:
+    from app.core.rate_limit import limiter
+
     key_retry = limiter.check_key_limit(api_key, settings.rate_limit_per_day_key, 86400)
     if key_retry > 0:
         raise HTTPException(
@@ -97,7 +102,10 @@ def verify_api_key(
             headers={"Retry-After": str(key_retry)},
         )
 
-    # Global daily limit check (kill switch)
+
+def enforce_global_daily_limit() -> None:
+    from app.core.rate_limit import limiter
+
     if not limiter.check_global_daily_limit(settings.daily_analyze_limit_global):
         raise HTTPException(
             status_code=429,
@@ -105,6 +113,10 @@ def verify_api_key(
             headers={"Retry-After": "86400"},
         )
 
+
+def verify_api_key(api_key: str = Depends(verify_ip_limit)) -> str:
+    enforce_daily_key_limit(api_key)
+    enforce_global_daily_limit()
     return api_key
 
 
@@ -114,6 +126,10 @@ def get_orchestrator(request: Request) -> AnalysisOrchestrator:
 
 def get_metrics_store(request: Request) -> MetricsStore:
     return request.app.state.metrics_store
+
+
+def get_analysis_cache(request: Request) -> AnalysisCache:
+    return request.app.state.analysis_cache
 
 
 def authenticate_admin(api_key: str | None = Security(admin_key_header)) -> None:

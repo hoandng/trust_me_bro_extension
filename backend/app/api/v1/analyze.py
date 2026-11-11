@@ -13,10 +13,14 @@ from uuid import uuid4
 
 from app.api.deps import (
     authenticate_api_key,
+    enforce_daily_key_limit,
+    enforce_global_daily_limit,
+    get_analysis_cache,
     get_metrics_store,
     get_orchestrator,
-    verify_api_key,
+    verify_ip_limit,
 )
+from app.core.analysis_cache import AnalysisCache, CacheKey
 from app.core.config import settings
 from app.core.metrics import (
     AnalysisMetrics,
@@ -39,29 +43,43 @@ logger = logging.getLogger(__name__)
 @router.post("/analyze", response_model=AnalyzeResponse)
 async def analyze_text(
     request: AnalyzeRequest,
-    api_key: Annotated[str, Depends(verify_api_key)],
+    api_key: Annotated[str, Depends(verify_ip_limit)],
     orchestrator: Annotated[AnalysisOrchestrator, Depends(get_orchestrator)],
     store: Annotated[MetricsStore, Depends(get_metrics_store)],
+    cache: Annotated[AnalysisCache, Depends(get_analysis_cache)],
 ):
     # Do not log user text content directly according to requirements
     logger.info(
         f"Received analysis request for platform {request.platform} with text length {len(request.text)}"
     )
 
+    started = monotonic()
+    model_id = request.model_id or settings.gemini_model
+    cache_key = None
+    result = None
+    if not request.bypass_cache:
+        cache_key = CacheKey.for_request(request.text, model_id, request.lang)
+        try:
+            result = await run_in_threadpool(cache.get, cache_key)
+        except sqlite3.Error:
+            logger.warning("Unable to read analysis cache")
+
+    if result is None:
+        enforce_daily_key_limit(api_key)
+    enforce_global_daily_limit()
+
     request_id = uuid4()
     created_at = datetime.now(UTC).isoformat()
     digest = content_digest(request.text)
-    metrics = AnalysisMetrics(requested_model=request.model_id or settings.gemini_model)
-    started = monotonic()
+    metrics = AnalysisMetrics(requested_model=model_id, cache_hit=result is not None)
     token = current_metrics.set(metrics)
-    result = None
     status_code = 500
     try:
-        ctx = AnalysisContext(text=request.text, lang=request.lang)
-        result = await orchestrator.analyze(ctx, model_id=request.model_id)
+        if result is None:
+            ctx = AnalysisContext(text=request.text, lang=request.lang)
+            result = await orchestrator.analyze(ctx, model_id=request.model_id)
         result.request_id = request_id
         status_code = 200
-        return result
     except GeminiQuotaExhausted as error:
         status_code = 503
         raise HTTPException(
@@ -97,6 +115,20 @@ async def analyze_text(
                 raise HTTPException(
                     status_code=503, detail="Metrics storage unavailable"
                 ) from None
+
+    if cache_key is not None and not metrics.cache_hit:
+        try:
+            await run_in_threadpool(
+                cache.save,
+                cache_key,
+                result,
+                text=request.text,
+                page_url=request.page_url,
+                timed_out=metrics.timed_out,
+            )
+        except sqlite3.Error:
+            logger.warning("Unable to write analysis cache")
+    return result
 
 
 @router.get("/models")

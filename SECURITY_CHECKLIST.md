@@ -1,9 +1,9 @@
 # SECURITY_CHECKLIST.md
 
 ## Backend
-- ✅ `POST /api/v1/analyze` và `POST /api/v1/feedback` xác thực `X-API-Key` và dùng chung hạn mức IP, key và tổng lượt. Vượt giới hạn trả `429` cùng `Retry-After`. `GET /api/v1/models` yêu cầu key và chỉ trả tên model cùng model mặc định.
+- ✅ `POST /api/v1/analyze` và `POST /api/v1/feedback` xác thực `X-API-Key` và dùng chung hạn mức IP, key và tổng lượt. Cache hit vẫn tính vào hạn mức IP và tổng lượt, đồng thời được miễn hạn mức key/ngày. Vượt giới hạn trả `429` cùng `Retry-After`.
 - ✅ `GET /api/v1/stats/summary` dùng `X-Admin-API-Key`. Cấu hình `ADMIN_API_KEY` riêng với khóa extension. API trả số liệu tổng hợp.
-- ✅ SQLite lưu SHA-256 của văn bản chuẩn hóa, độ dài và metadata phục vụ thống kê. Các trường văn bản, URL bài đăng, claim, query và nội dung kết quả nằm ngoài schema SQLite. File database và file SQLite phụ nằm trong `.gitignore`. Gemini Interactions được gọi với `store=false`.
+- ✅ Bảng số liệu SQLite lưu SHA-256 của văn bản chuẩn hóa, độ dài và metadata thống kê. Bảng cache giữ kết quả có TTL theo hash và bỏ qua phản hồi lặp lại toàn văn bài đăng hoặc URL bài đăng. File database và file SQLite phụ nằm trong `.gitignore`. Gemini Interactions được gọi với `store=false`.
 - ✅ `DAILY_ANALYZE_LIMIT_GLOBAL` giới hạn số lượt phân tích đã qua kiểm tra IP/key trong một process theo ngày UTC. Mặc định là 1000 lượt. Một lượt phân tích có thể gọi Gemini nhiều lần do các bước xử lý, retry và chuyển model.
 - ✅ Middleware kiểm tra `Content-Length` và trả `413` khi vượt `MAX_BODY_SIZE_BYTES` (mặc định 8192 byte). Giới hạn này dựa trên giá trị header khai báo. Schema phân tích kiểm tra độ dài `text` và từ chối `model_id` ngoài danh sách cấu hình bằng `422`.
 - ✅ Middleware gắn `X-Content-Type-Options`, `X-Frame-Options`, `X-XSS-Protection` và `Strict-Transport-Security` lên response đi qua `call_next`.

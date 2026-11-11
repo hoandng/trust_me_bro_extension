@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from app.api.v1 import analyze, metrics
+from app.core.analysis_cache import AnalysisCache
 from app.core.config import settings
 from app.core.logging import setup_logging
 from app.core.metrics import MetricsStore
@@ -23,11 +24,14 @@ async def lifespan(app: FastAPI):
     async with AsyncExitStack() as stack:
         metrics_store = MetricsStore(settings.metrics_db_path)
         await run_in_threadpool(metrics_store.initialize)
+        analysis_cache = AnalysisCache(settings.metrics_db_path)
+        await run_in_threadpool(analysis_cache.initialize)
         client = await stack.enter_async_context(httpx.AsyncClient(timeout=10.0))
         gemini = GeminiService()
         stack.push_async_callback(gemini.aclose)
         app.state.http_client = client
         app.state.metrics_store = metrics_store
+        app.state.analysis_cache = analysis_cache
         app.state.orchestrator = AnalysisOrchestrator(
             gemini, FactCheckService(client), TavilySearchService(client)
         )
@@ -37,6 +41,7 @@ async def lifespan(app: FastAPI):
             del app.state.orchestrator
             del app.state.http_client
             del app.state.metrics_store
+            del app.state.analysis_cache
 
 
 app_kwargs = {"title": "FactCheck API", "version": "1.0.0"}

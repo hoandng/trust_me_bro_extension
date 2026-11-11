@@ -45,6 +45,7 @@ class _AnalysisTiming:
             metrics.evidence_ms = self.metadata["evidence_ms"]
             metrics.assess_ms = self.metadata["assess_ms"]
             metrics.total_ms = total_ms
+            metrics.timed_out = self.metadata["timeout_stage"] is not None
             metrics.extraction_model = model_usage.extraction_model
             metrics.assessment_model = model_usage.assessment_model
         logger.info(

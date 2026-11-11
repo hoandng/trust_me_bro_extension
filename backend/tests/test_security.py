@@ -1,9 +1,10 @@
+from ipaddress import ip_network
+
 import pytest
 from app.core.config import settings
 from app.core.rate_limit import limiter
 from app.main import app
 from fastapi.testclient import TestClient
-from ipaddress import ip_network
 
 
 @pytest.fixture
@@ -55,7 +56,11 @@ def test_rate_limit_ip(client):
 def test_rate_limit_key(client):
     limiter.ip_records.clear()  # clear IP limit
     headers = {"X-API-Key": "test_key"}
-    data = {"text": "Hello", "platform": "facebook", "lang": "vi"}
+    data = {
+        "text": "Synthetic post for rate limit checks.",
+        "platform": "facebook",
+        "lang": "vi",
+    }
 
     settings.rate_limit_per_minute_ip = 100  # relax IP limit
 
@@ -78,7 +83,11 @@ def test_global_limit(client):
     settings.daily_analyze_limit_global = 2
 
     headers = {"X-API-Key": "test_key"}
-    data = {"text": "Hello", "platform": "facebook", "lang": "vi"}
+    data = {
+        "text": "Synthetic post for global limit checks.",
+        "platform": "facebook",
+        "lang": "vi",
+    }
 
     # 2 requests allowed
     client.post("/api/v1/analyze", json=data, headers=headers)

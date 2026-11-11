@@ -51,7 +51,7 @@ Mục tiêu: extension dùng được mượt mà, xử lý lỗi tốt, sẵn s
 
 - [ ] Chèn nút phân tích trực tiếp vào từng bài post ngay trên News Feed của Facebook/Reddit (trang chi tiết bài viết Reddit `/comments/` đã hỗ trợ chèn nút kiểm chứng)
 - [ ] Chế độ click vào bài post → tự động phân tích toàn bộ nội dung post đó
-- [ ] Cache kết quả phân tích theo hash nội dung: thêm `extension/src/infrastructure/cache/`, TTL và policy của từng tính năng; có thể bổ sung Redis ở backend khi cần cache dùng chung
+- [x] C1. Cache kết quả phân tích tại backend theo hash nội dung và phiên bản prompt, có TTL, telemetry và chế độ bỏ qua cache cho benchmark.
 - [ ] Tóm tắt bài báo: thêm `features/article-summary/`, hợp đồng message và endpoint backend tương ứng
 - [ ] Lưu lịch sử phân tích cho người dùng (tuỳ chọn, cần thiết kế lại phần bảo mật/lưu trữ dữ liệu)
 

@@ -98,7 +98,7 @@ extension/
 
 - Thêm mạng xã hội: tạo adapter implement `PlatformAdapter` trong `features/analysis/content/adapters/`, đăng ký trong `index.ts` và cập nhật matches/host permissions ở Vite.
 - Thêm tóm tắt bài báo: tạo `features/article-summary/` với `types.ts`, `content/`, `background/`, `sidepanel/`; thêm hợp đồng message và nối tại các entrypoint. Xử lý AI vẫn nằm ở backend.
-- Thêm cache: tạo adapter `infrastructure/cache/` khi triển khai, để từng tính năng tự quyết định khóa, TTL và điều kiện bỏ qua cache. Tách cache kết quả khỏi trạng thái UI theo tab.
+- Cache kết quả nằm ở backend. Trạng thái giao diện theo tab của extension chỉ phục vụ hiển thị và thử lại.
 - Thêm service AI/search bên ngoài: triển khai ở backend; extension chỉ thêm API client hoặc mapper của tính năng khi hợp đồng backend thay đổi.
 
 Chi tiết phát triển, debug và kiểm tra thủ công: [`extension/README.md`](extension/README.md).
@@ -204,7 +204,7 @@ Mỗi bước Gemini bắt đầu từ model ưu tiên, thử theo vòng và b�
 
 ### 2.5. Số liệu phân tích và phản hồi
 
-Lifespan khởi tạo `backend/data/metrics.db` bằng `sqlite3`. Backend ghi một dòng theo UUID cho mỗi lượt vào pipeline, kể cả lượt degraded hoặc lỗi. Dòng ghi gồm thời điểm UTC, platform, độ dài văn bản, SHA-256 sau NFKC và gộp khoảng trắng, trạng thái HTTP, verdict, confidence, thời gian pipeline, model, số request đã thử gửi theo provider, usage trả về, `cache_hit` và chi phí USD ước tính. Lượt chưa có verdict dùng `null`. Gemini Interactions dùng `store=false`. Chỉ metadata đã chọn được chuyển đến SQLite và log.
+Lifespan khởi tạo `backend/data/metrics.db` bằng `sqlite3`. Backend ghi một dòng theo UUID cho mỗi lượt phân tích đã qua hạn mức, kể cả lượt cache hit, degraded hoặc lỗi. Dòng ghi gồm thời điểm UTC, platform, độ dài văn bản, SHA-256 sau NFKC và gộp khoảng trắng, trạng thái HTTP, verdict, confidence, thời gian xử lý, model, số request đã thử gửi theo provider, usage trả về, `cache_hit` và chi phí USD ước tính. Lượt chưa có verdict dùng `null`. Gemini Interactions dùng `store=false`. Bảng số liệu và log chỉ nhận metadata đã chọn.
 
 `POST /api/v1/feedback` cập nhật một phản hồi cho mỗi UUID đã có verdict. `GET /api/v1/stats/summary` tổng hợp trực tiếp từ SQLite. Tỷ lệ verdict chia theo số lượt có verdict. Độ trễ trung bình và p95 tính trên mọi lượt đã ghi. p95 lấy giá trị tại vị trí `ceil(0.95 × n)` sau khi sắp xếp. Chi phí trung bình chia theo số lượt ước tính được và tỷ lệ helpful chia theo số lượt đã phản hồi.
 
@@ -212,14 +212,20 @@ Lifespan khởi tạo `backend/data/metrics.db` bằng `sqlite3`. Backend ghi m�
 
 `scripts/benchmark/` chạy bốn chế độ `llm_only`, `factcheck_only`, `llm_factcheck` và `full` trên cùng dataset CSV. Hai chế độ có Gemini và nguồn dùng lại orchestrator. `llm_factcheck` bỏ qua Tavily. Runner dùng bộ đo chi phí B1, cache kết quả theo mẫu–chế độ trong SQLite riêng và xuất báo cáo cùng phiếu chấm citation. Xem [hướng dẫn benchmark](scripts/benchmark/README.md).
 
+### 2.7. Cache kết quả phân tích
+
+`/analyze` kiểm tra xác thực và hạn mức IP trước khi tra bảng `analysis_cache` trong `metrics.db`. Khóa gồm SHA-256 của text sau trim, gộp khoảng trắng và lowercase, phiên bản tự tính từ prompt trích xuất và đánh giá, model yêu cầu và hash ngôn ngữ. Cache hit bỏ qua hạn mức key/ngày và pipeline. Hạn mức toàn cục vẫn áp dụng. Mỗi hit tạo UUID mới cho feedback, ghi `cache_hit=true` cùng chi phí và số lượt gọi provider bằng 0.
+
+TTL mặc định là 24 giờ khi confidence từ 0.8, 1 giờ khi confidence thấp hơn và 15 phút cho `unverified`. TTL tính từ lúc ghi. Backend chỉ đọc bản ghi chưa hết hạn và dọn bản ghi hết hạn khi khởi động hoặc ghi mới. Cache giữ kết quả đã kiểm tra cùng khóa và mốc hết hạn. Nếu kết quả degraded, timeout, có lỗi provider hoặc chứa lại toàn văn bản hay URL bài đăng, backend bỏ qua ghi cache. `bypass_cache=true` bỏ qua đọc và ghi.
+
 ## 3. Bảo mật (quan trọng — đọc kỹ trước khi code)
 
 | Vấn đề | Giải pháp |
 |---|---|
 | API key (Gemini, Tavily, Fact Check) | Chỉ cấu hình ở backend qua biến môi trường hoặc `backend/.env`. |
 | Giao tiếp Extension ↔ Backend | Local dùng HTTP trên loopback. Khi triển khai, cấu hình HTTPS ở tầng phục vụ backend. Extension gửi key riêng qua `X-API-Key`. |
-| Rate limiting | Backend đếm lượt phân tích theo IP, theo key và theo tổng lượt trong process. IP đến từ kết nối trực tiếp hoặc từ chuỗi `X-Forwarded-For` đã kiểm tra khi bật chế độ proxy tin cậy. |
-| Dữ liệu người dùng | Backend xử lý nội dung theo request và lưu metadata số liệu vào SQLite. Extension giữ nội dung và kết quả chi tiết trong RAM, còn Chrome storage giữ trạng thái và UUID. Xem [checklist bảo mật](SECURITY_CHECKLIST.md). |
+| Rate limiting | Backend đếm lượt theo IP, key và tổng lượt trong process. Cache hit được miễn hạn mức key/ngày. IP đến từ kết nối trực tiếp hoặc từ chuỗi `X-Forwarded-For` đã kiểm tra khi bật chế độ proxy tin cậy. |
+| Dữ liệu người dùng | SQLite lưu metadata số liệu và kết quả đủ điều kiện cache. Extension giữ nội dung và kết quả chi tiết trong RAM, còn Chrome storage giữ trạng thái và UUID. Xem [checklist bảo mật](SECURITY_CHECKLIST.md). |
 | CORS | Backend bật CORS khi có `ALLOWED_ORIGINS`. Mỗi origin của extension có dạng `chrome-extension://<extension-id>`. |
 | Input validation | Backend kiểm tra độ dài văn bản và giới hạn `Content-Length`. Prompt Gemini đặt văn bản trong thẻ `<post>` và kiểm tra JSON đầu ra. |
 
@@ -234,7 +240,7 @@ Key tĩnh `VITE_EXTENSION_API_KEY` được nhúng vào bundle khi build và có
 | Tavily API | Search engine tối ưu cho AI, tìm nguồn tin liên quan real-time | Cần API key, có free tier |
 
 ## 5. Giới hạn/nợ kỹ thuật đã biết (bản demo)
-- SQLite dùng cho số liệu và feedback. Cache kết quả và lịch sử phân tích chưa triển khai.
+- SQLite dùng cho số liệu, feedback và cache có TTL. Lịch sử phân tích chưa triển khai.
 - Hỗ trợ Facebook và Reddit; DOM selector có thể hỏng khi nền tảng đổi giao diện → cần thiết kế adapter dễ sửa (mục 2.1).
 - Static API key giữa extension–backend chưa đủ an toàn cho production.
 - Bộ đếm lượt phân tích và cooldown Gemini nằm trong bộ nhớ của từng process và mất khi process khởi động lại.
@@ -244,4 +250,4 @@ Key tĩnh `VITE_EXTENSION_API_KEY` được nhúng vào bundle khi build và có
 - Thêm mạng xã hội mới → thêm adapter mới trong extension, không đổi backend.
 - Thêm API/nguồn dữ liệu mới → thêm 1 service mới trong `services/`, đăng ký vào orchestrator.
 - Chế độ tự động phân tích khi click vào post (thay vì bôi đen) → chỉ cần thêm 1 adapter method `injectButtonOnEachPost()`, luồng backend giữ nguyên.
-- Khi cần lưu lịch sử/cache → thêm `database/` layer + Redis cache trước các service calls, không ảnh hưởng orchestrator logic.
+- Khi cần chia sẻ cache giữa nhiều máy, có thể thay SQLite bằng kho dùng chung ở lớp API.

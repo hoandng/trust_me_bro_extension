@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     daily_analyze_limit_global: int = 1000
     max_body_size_bytes: int = 8192
     analysis_timeout_seconds: float = Field(default=25.0, gt=0, allow_inf_nan=False)
+    cache_high_confidence_ttl_seconds: int = Field(default=86400, ge=0)
+    cache_low_confidence_ttl_seconds: int = Field(default=3600, ge=0)
+    cache_unverified_ttl_seconds: int = Field(default=900, ge=0)
 
     env: str = "development"
 

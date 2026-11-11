@@ -278,9 +278,15 @@ def test_limit_and_http_quota_retry(benchmark, benchmark_api, tmp_path):
             )
         )
         assert benchmark.main(args) == 0
-    assert factcheck.call_count == 4
-    assert tavily.call_count == 1
-    assert sdk.return_value.aio.interactions.create.await_count == 5
+        assert factcheck.call_count == 4
+        assert tavily.call_count == 1
+        assert sdk.return_value.aio.interactions.create.await_count == 5
+        cache_before = (tmp_path / "cache.db").read_bytes()
+        assert benchmark.main([*args, "--bypass-cache"]) == 0
+        assert (tmp_path / "cache.db").read_bytes() == cache_before
+        assert factcheck.call_count == 7
+        assert tavily.call_count == 2
+        assert sdk.return_value.aio.interactions.create.await_count == 10
     (result_path,) = (
         path for path in tmp_path.glob("*.csv") if "_citations" not in path.name
     )
@@ -288,6 +294,7 @@ def test_limit_and_http_quota_retry(benchmark, benchmark_api, tmp_path):
     assert len(rows) == 4
     assert {row["id"] for row in rows} == {"sample-01"}
     assert all(row["prediction"] == "true" for row in rows)
+    assert all(row["cached"] == "False" for row in rows)
 
 
 def test_gemini_quota_retry_and_wait_cap(benchmark, monkeypatch):

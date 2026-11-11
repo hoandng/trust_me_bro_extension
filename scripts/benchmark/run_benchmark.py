@@ -12,7 +12,7 @@ import sys
 import unicodedata
 from collections import Counter
 from collections.abc import Iterable
-from contextlib import AsyncExitStack, closing
+from contextlib import AsyncExitStack, closing, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -24,9 +24,6 @@ from typing import Literal
 from urllib.parse import urlsplit
 
 import httpx
-from pydantic import BaseModel
-
-
 from app.core.config import settings
 from app.core.metrics import AnalysisMetrics, current_metrics
 from app.orchestrator.analysis_orchestrator import AnalysisOrchestrator
@@ -36,7 +33,7 @@ from app.services.factcheck_service import FactCheckService
 from app.services.gemini_model_pool import GeminiQuotaExhausted
 from app.services.gemini_service import VIETNAM_TIMEZONE, GeminiService
 from app.services.tavily_service import TavilySearchService
-
+from pydantic import BaseModel
 
 BENCHMARK_DIR = Path(__file__).resolve().parent
 BACKEND_DIR = BENCHMARK_DIR.parents[1] / "backend"
@@ -531,19 +528,27 @@ async def run(args: argparse.Namespace) -> int:
         for mode in MODES
     ]
     rows = []
-    args.cache.parent.mkdir(parents=True, exist_ok=True)
-    with closing(sqlite3.connect(args.cache)) as db:
-        db.execute(
-            "CREATE TABLE IF NOT EXISTS results (key TEXT PRIMARY KEY, payload TEXT NOT NULL)"
-        )
+    cache_context = nullcontext()
+    if not args.bypass_cache:
+        args.cache.parent.mkdir(parents=True, exist_ok=True)
+        cache_context = closing(sqlite3.connect(args.cache))
+    with cache_context as db:
+        if db is not None:
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS results (key TEXT PRIMARY KEY, payload TEXT NOT NULL)"
+            )
         cache = {}
         missing_keys = set()
         for _, mode, key in jobs:
             if key in cache:
                 continue
-            cached = db.execute(
-                "SELECT payload FROM results WHERE key = ?", (key,)
-            ).fetchone()
+            cached = (
+                db.execute(
+                    "SELECT payload FROM results WHERE key = ?", (key,)
+                ).fetchone()
+                if db is not None
+                else None
+            )
             if cached:
                 cache[key] = Evaluation.model_validate_json(cached[0])
             elif not args.cache_only:
@@ -579,7 +584,11 @@ async def run(args: argparse.Namespace) -> int:
                             gemini, FactCheckService(http), TavilySearchService(http)
                         )
                     evaluation = await evaluate(modes, mode, sample, args.retries)
-                    if evaluation.prediction is not None and not evaluation.degraded:
+                    if (
+                        db is not None
+                        and evaluation.prediction is not None
+                        and not evaluation.degraded
+                    ):
                         with db:
                             db.execute(
                                 "INSERT OR REPLACE INTO results (key, payload) VALUES (?, ?)",
@@ -610,7 +619,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--retries", type=int, default=2, help="Số lần thử lại khi chạm quota."
     )
-    parser.add_argument("--cache-only", action="store_true", help="Chỉ xuất từ cache.")
+    cache_options = parser.add_mutually_exclusive_group()
+    cache_options.add_argument(
+        "--cache-only", action="store_true", help="Chỉ xuất từ cache."
+    )
+    cache_options.add_argument(
+        "--bypass-cache",
+        action="store_true",
+        help="Chạy lại mà không đọc hay ghi cache benchmark.",
+    )
     parser.add_argument(
         "--judgments", type=Path, help="Tệp chấm nguồn từ một lần chạy trước."
     )

@@ -1,7 +1,7 @@
 from unittest.mock import AsyncMock
 
 import pytest
-from app.api.deps import get_orchestrator
+from app.api.deps import get_orchestrator, verify_ip_limit
 from app.core.config import settings
 from app.main import app
 from app.orchestrator.analysis_orchestrator import AnalysisOrchestrator
@@ -75,10 +75,7 @@ def mock_orchestrator():
 def client(mock_orchestrator, monkeypatch):
     monkeypatch.setattr(settings, "gemini_api_key", "")
     app.dependency_overrides[get_orchestrator] = lambda: mock_orchestrator
-    # We must also mock verify_api_key or pass it
-    from app.api.deps import verify_api_key
-
-    app.dependency_overrides[verify_api_key] = lambda: "test-api-key"
+    app.dependency_overrides[verify_ip_limit] = lambda: "test-api-key"
 
     with TestClient(app) as c:
         yield c

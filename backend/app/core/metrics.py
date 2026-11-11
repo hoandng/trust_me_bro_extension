@@ -69,6 +69,7 @@ class AnalysisMetrics:
     tavily_credits: list[int | None] = field(default_factory=list)
     gemini_usage: list[GeminiUsage] = field(default_factory=list)
     cache_hit: bool = False
+    timed_out: bool = False
 
     def estimated_cost(self) -> float | None:
         cost = 0.0

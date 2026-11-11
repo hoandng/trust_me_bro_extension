@@ -247,6 +247,7 @@ def test_model_selection_metadata_and_all_models_exhausted(client):
         "text": "This claim has enough text for the validation.",
         "platform": "facebook",
         "model_id": settings.gemini_model,
+        "bypass_cache": True,
     }
     try:
         response = client.post(
