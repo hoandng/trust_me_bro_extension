@@ -4,6 +4,7 @@ from urllib.parse import urlparse
 import httpx
 
 from app.core.config import settings
+from app.core.metrics import current_metrics
 from app.schemas.internal import AnalysisContext, ServiceResult
 from app.schemas.response import Source
 from app.services.base_service import BaseService, safe_execute
@@ -82,6 +83,7 @@ class TavilySearchService(BaseService):
             "auto_parameters": False,
             "include_published_date": True,
             "include_answer": False,
+            "include_usage": True,
             "max_results": 5,
         }
 
@@ -92,14 +94,21 @@ class TavilySearchService(BaseService):
             payload["exclude_domains"] = settings.tavily_exclude_domains
 
         try:
+            metrics = current_metrics.get()
             for topic in ("news", "general"):
+                if metrics is not None:
+                    attempt = len(metrics.tavily_credits)
+                    metrics.tavily_credits.append(None)
                 response = await self._client.post(
                     url,
                     headers={"Authorization": f"Bearer {api_key}"},
                     json={**payload, "topic": topic},
                 )
                 response.raise_for_status()
-                sources = self._parse_results(response.json().get("results") or [])
+                data = response.json()
+                if metrics is not None:
+                    metrics.record_tavily_credits(attempt, data.get("usage"))
+                sources = self._parse_results(data.get("results") or [])
                 if sources:
                     return ServiceResult(
                         service=self.name, status="ok", sources=sources

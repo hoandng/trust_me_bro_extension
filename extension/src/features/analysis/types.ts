@@ -21,6 +21,7 @@ export interface ModelUsage {
 }
 
 export interface AnalyzeResponse {
+  request_id?: string;
   model_usage?: ModelUsage | null;
   verdict: 'Thật' | 'Giả' | 'Thiếu ngữ cảnh' | 'Không thể kiểm chứng';
   confidence: number;
@@ -31,6 +32,11 @@ export interface AnalyzeResponse {
 
 export type AnalysisStatus = 'idle' | 'loading' | 'success' | 'error';
 
+export interface StoredTabAnalysisState {
+  status: AnalysisStatus;
+  request_id?: string;
+}
+
 export interface TabAnalysisState {
   status: AnalysisStatus;
   request?: SelectionPayload;
@@ -39,6 +45,7 @@ export interface TabAnalysisState {
 }
 
 export interface BackendAnalysisResponse {
+  request_id?: string;
   model_usage?: ModelUsage | null;
   verdict: string;
   confidence_score: number;

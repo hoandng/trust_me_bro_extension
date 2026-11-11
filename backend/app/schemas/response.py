@@ -1,6 +1,7 @@
 from typing import Literal
+from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import UUID4, BaseModel, Field
 
 
 class Source(BaseModel):
@@ -36,6 +37,7 @@ class ModelUsage(BaseModel):
 
 
 class AnalyzeResponse(BaseModel):
+    request_id: UUID4 = Field(default_factory=uuid4)
     verdict: Literal["likely_true", "likely_false", "mixed", "unverified"]
     confidence_score: float
     explanation: str

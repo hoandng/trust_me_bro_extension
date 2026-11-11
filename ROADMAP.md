@@ -44,6 +44,7 @@ Mục tiêu: extension dùng được mượt mà, xử lý lỗi tốt, sẵn s
 - [x] A1: Chuẩn hóa rating Fact Check tiếng Anh và tiếng Việt, giữ stance gốc và chỉ cho phép nguồn Fact Check đầu tiên đổi verdict khi khớp khẳng định. Có test hồi quy cho `Not true`, stance gốc và điều kiện khớp claim.
 - [x] A2. Tra cứu song song tối đa hai truy vấn với trần request, xếp nguồn theo tier và dùng ngày xuất bản để đánh giá dấu hiệu tin cũ đăng lại. Có test mock cho fallback, giới hạn request, thứ tự nguồn và ngày xuất bản.
 - [x] A3. Dùng chung kết nối theo lifespan, giới hạn theo IP đã xác minh qua proxy, áp ngân sách phân tích mặc định 25 giây và ghi thời gian từng bước.
+- [x] B1. Ghi số liệu và phản hồi vào SQLite theo UUID, có API tổng hợp dành cho admin và kiểm thử nội dung gốc không đi vào kho lưu trữ.
 
 ## Milestone 3: Nâng cấp tính năng (theo yêu cầu ban đầu)
 

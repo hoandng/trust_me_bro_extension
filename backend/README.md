@@ -39,10 +39,20 @@ uvicorn app.main:app --reload --no-proxy-headers
 | `GET /health` | Trả `{"status":"ok"}` để kiểm tra tiến trình FastAPI. |
 | `GET /api/v1/models` | Yêu cầu `X-API-Key`. Trả `default_model` và `models` theo thứ tự cấu hình. |
 | `POST /api/v1/analyze` | Yêu cầu `X-API-Key`. Nhận `text` dài 20–2000 ký tự, `platform` (`facebook`, `reddit`, `x`) và các trường tùy chọn `page_url`, `lang`, `model_id`. |
+| `POST /api/v1/feedback` | Yêu cầu `X-API-Key`. Nhận `request_id`, `helpful` và `reason` tùy chọn. Trả `204` khi ghi thành công hoặc `404` khi UUID chưa có kết quả. |
+| `GET /api/v1/stats/summary` | Yêu cầu `X-Admin-API-Key`. Trả số lượt, tỷ lệ verdict, độ trễ, chi phí ước tính và tỷ lệ helpful. |
 
-Các giới hạn `RATE_LIMIT_PER_MINUTE_IP` (10), `RATE_LIMIT_PER_DAY_KEY` (100) và `DAILY_ANALYZE_LIMIT_GLOBAL` (1000 mỗi process) áp dụng cho phân tích. Khi vượt giới hạn, API trả `429` cùng `Retry-After`. `GET /api/v1/models` chỉ xác thực key. Xem [kiến trúc và ví dụ response](../ARCHITECTURE.md#23-luồng-xử-lý-tại-orchestrator).
+Phân tích và feedback dùng chung các giới hạn `RATE_LIMIT_PER_MINUTE_IP` (10), `RATE_LIMIT_PER_DAY_KEY` (100) và `DAILY_ANALYZE_LIMIT_GLOBAL` (1000 mỗi process). Khi vượt giới hạn, API trả `429` cùng `Retry-After`. `GET /api/v1/models` chỉ xác thực key. Xem [kiến trúc và ví dụ response](../ARCHITECTURE.md#23-luồng-xử-lý-tại-orchestrator).
 
 `ANALYSIS_TIMEOUT_SECONDS` là ngân sách chung của pipeline, mặc định 25 giây. Khi hết ngân sách, API trả `200` với verdict `unverified`, thông báo hết thời gian và nguồn đã thu được nếu có.
+
+## Số liệu và phản hồi
+
+`POST /api/v1/analyze` trả `request_id` dưới dạng UUID v4. Dùng UUID đó để gửi feedback. `helpful` nhận giá trị boolean và `reason` nhận một trong các giá trị `incorrect_verdict`, `missing_context`, `weak_sources`, `other` hoặc có thể bỏ qua. Gửi lại cùng UUID sẽ cập nhật phản hồi.
+
+Database mặc định là `backend/data/metrics.db`. Khi triển khai, đặt database trên ổ lưu trữ có quyền ghi nếu cần giữ số liệu qua các lần khởi động. File chỉ chứa metadata và hash, gồm cả lượt chưa có verdict như `503`. Đặt `ADMIN_API_KEY` khác `EXTENSION_API_KEY` để bật summary.
+
+Chi phí ước tính dùng USD. `GEMINI_TOKEN_PRICES` là JSON theo model, mỗi model có `input_usd_per_million`, `output_usd_per_million` và `cached_input_usd_per_million` nếu dùng cache token. Đơn giá output áp dụng cả token suy luận. Đặt `TAVILY_USD_PER_CREDIT` theo gói đang dùng. Lượt thiếu dữ liệu usage hoặc đơn giá có chi phí `null`. `cost_per_check_usd` lấy trung bình trên `checks_with_estimated_cost`. `helpful_rate` là tỷ lệ 0–1 trên `feedback_count` và là `null` khi chưa có phản hồi. `average_latency_ms` và `p95_latency_ms` đo thời gian pipeline, trước thao tác ghi SQLite.
 
 ## Chạy sau reverse proxy
 
@@ -63,6 +73,10 @@ Proxy ở biên cần ghi đè `X-Forwarded-For` nhận từ client bằng IP k�
 | `TAVILY_EXCLUDE_DOMAINS` | `[]` | Mảng JSON các domain loại trừ khi tìm kiếm qua Tavily. |
 | `FACTCHECK_API_KEY` | `""` | API key cho Google Fact Check Tools API. |
 | `EXTENSION_API_KEY` | `""` | Khóa xác thực nội bộ giữa Extension và Backend qua header `X-API-Key`. |
+| `ADMIN_API_KEY` | `""` | Khóa riêng cho endpoint summary qua header `X-Admin-API-Key`. |
+| `METRICS_DB_PATH` | `backend/data/metrics.db` | Đường dẫn SQLite của số liệu và feedback. |
+| `GEMINI_TOKEN_PRICES` | `{}` | Đơn giá USD trên một triệu token theo model. |
+| `TAVILY_USD_PER_CREDIT` | Chưa đặt | Đơn giá USD trên mỗi credit Tavily. |
 | `ALLOWED_ORIGINS` | `""` | Danh sách origin được phép gọi CORS (phân tách bằng dấu phẩy, ví dụ `chrome-extension://<id>`). |
 | `RATE_LIMIT_PER_MINUTE_IP` | `10` | Giới hạn số lượt phân tích mỗi phút trên một IP. |
 | `TRUST_PROXY_HEADERS` | `false` | Cho phép dùng `X-Forwarded-For` khi kết nối đến từ một proxy tin cậy. |

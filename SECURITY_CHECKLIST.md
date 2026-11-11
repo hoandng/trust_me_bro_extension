@@ -1,7 +1,9 @@
 # SECURITY_CHECKLIST.md
 
 ## Backend
-- ✅ `POST /api/v1/analyze` xác thực `X-API-Key` rồi áp dụng mặc định 10 lượt/phút/IP và 100 lượt trong cửa sổ 24 giờ/key. Vượt giới hạn trả `429` cùng `Retry-After`. `GET /api/v1/models` yêu cầu key và chỉ trả tên model cùng model mặc định. Lượt đọc danh sách nằm ngoài các bộ đếm phân tích.
+- ✅ `POST /api/v1/analyze` và `POST /api/v1/feedback` xác thực `X-API-Key` và dùng chung hạn mức IP, key và tổng lượt. Vượt giới hạn trả `429` cùng `Retry-After`. `GET /api/v1/models` yêu cầu key và chỉ trả tên model cùng model mặc định.
+- ✅ `GET /api/v1/stats/summary` dùng `X-Admin-API-Key`. Cấu hình `ADMIN_API_KEY` riêng với khóa extension. API trả số liệu tổng hợp.
+- ✅ SQLite lưu SHA-256 của văn bản chuẩn hóa, độ dài và metadata phục vụ thống kê. Các trường văn bản, URL bài đăng, claim, query và nội dung kết quả nằm ngoài schema SQLite. File database và file SQLite phụ nằm trong `.gitignore`. Gemini Interactions được gọi với `store=false`.
 - ✅ `DAILY_ANALYZE_LIMIT_GLOBAL` giới hạn số lượt phân tích đã qua kiểm tra IP/key trong một process theo ngày UTC. Mặc định là 1000 lượt. Một lượt phân tích có thể gọi Gemini nhiều lần do các bước xử lý, retry và chuyển model.
 - ✅ Middleware kiểm tra `Content-Length` và trả `413` khi vượt `MAX_BODY_SIZE_BYTES` (mặc định 8192 byte). Giới hạn này dựa trên giá trị header khai báo. Schema phân tích kiểm tra độ dài `text` và từ chối `model_id` ngoài danh sách cấu hình bằng `422`.
 - ✅ Middleware gắn `X-Content-Type-Options`, `X-Frame-Options`, `X-XSS-Protection` và `Strict-Transport-Security` lên response đi qua `call_next`.
@@ -19,7 +21,7 @@
 - ✅ Mã extension gọi backend bằng `VITE_EXTENSION_API_KEY`. Key của Gemini, Tavily và Fact Check được cấu hình ở backend.
 - ✅ Side panel dùng `textContent` cho phần văn bản từ backend. Link nguồn lấy URL từ response và dùng `rel="noopener noreferrer"`.
 - ✅ Manifest đặt CSP cho extension pages là `script-src 'self'; object-src 'self';`.
-- Nội dung gửi đi và kết quả phân tích nằm trong `chrome.storage.session` theo tab để hiển thị và thử lại. `chrome.storage.local` giữ lựa chọn model.
+- `chrome.storage.session` giữ trạng thái và UUID theo tab. Nội dung gửi đi và kết quả chi tiết nằm trong RAM để hiển thị và thử lại trong vòng đời worker. `chrome.storage.local` giữ lựa chọn model.
 
 ## Rủi ro còn lại (Known Risks & Vulnerabilities)
 1. **Static API Key trong Extension:** Extension của người dùng vẫn đang mang theo 1 key tĩnh (`VITE_EXTENSION_API_KEY`) để định danh và gọi backend của chúng ta. Bất kỳ ai unpack / read file source của extension (trong Chrome) cũng có thể thấy key này và viết bot lấy key đó spam backend của bạn.

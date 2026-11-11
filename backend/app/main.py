@@ -4,10 +4,12 @@ import httpx
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
-from app.api.v1 import analyze
+from app.api.v1 import analyze, metrics
 from app.core.config import settings
 from app.core.logging import setup_logging
+from app.core.metrics import MetricsStore
 from app.orchestrator.analysis_orchestrator import AnalysisOrchestrator
 from app.services.factcheck_service import FactCheckService
 from app.services.gemini_service import GeminiService
@@ -19,10 +21,13 @@ setup_logging()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with AsyncExitStack() as stack:
+        metrics_store = MetricsStore(settings.metrics_db_path)
+        await run_in_threadpool(metrics_store.initialize)
         client = await stack.enter_async_context(httpx.AsyncClient(timeout=10.0))
         gemini = GeminiService()
         stack.push_async_callback(gemini.aclose)
         app.state.http_client = client
+        app.state.metrics_store = metrics_store
         app.state.orchestrator = AnalysisOrchestrator(
             gemini, FactCheckService(client), TavilySearchService(client)
         )
@@ -31,6 +36,7 @@ async def lifespan(app: FastAPI):
         finally:
             del app.state.orchestrator
             del app.state.http_client
+            del app.state.metrics_store
 
 
 app_kwargs = {"title": "FactCheck API", "version": "1.0.0"}
@@ -94,6 +100,7 @@ if settings.allowed_origins:
     )
 
 app.include_router(analyze.router, prefix="/api/v1")
+app.include_router(metrics.router, prefix="/api/v1")
 
 
 @app.get("/health")

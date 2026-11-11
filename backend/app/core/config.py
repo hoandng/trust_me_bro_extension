@@ -1,12 +1,22 @@
 import os
+from pathlib import Path
 
-from pydantic import Field, IPvAnyNetwork
+from pydantic import BaseModel, Field, IPvAnyNetwork
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 env_path = os.path.abspath(
     os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env")
 )
 MAX_SEARCH_QUERIES = 2
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
+
+
+class GeminiTokenPrices(BaseModel):
+    input_usd_per_million: float = Field(ge=0, allow_inf_nan=False)
+    output_usd_per_million: float = Field(ge=0, allow_inf_nan=False)
+    cached_input_usd_per_million: float | None = Field(
+        default=None, ge=0, allow_inf_nan=False
+    )
 
 
 class Settings(BaseSettings):
@@ -28,6 +38,10 @@ class Settings(BaseSettings):
         default=MAX_SEARCH_QUERIES, ge=1, le=MAX_SEARCH_QUERIES
     )
     extension_api_key: str = ""
+    admin_api_key: str = ""
+    metrics_db_path: Path = BACKEND_ROOT / "data" / "metrics.db"
+    gemini_token_prices: dict[str, GeminiTokenPrices] = Field(default_factory=dict)
+    tavily_usd_per_credit: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     allowed_origins: str = ""
 
     rate_limit_per_minute_ip: int = 10

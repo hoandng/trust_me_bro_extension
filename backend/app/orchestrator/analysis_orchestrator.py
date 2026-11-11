@@ -3,6 +3,7 @@ import logging
 from contextlib import contextmanager
 
 from app.core.config import MAX_SEARCH_QUERIES, settings
+from app.core.metrics import current_metrics
 from app.core.source_ranking import rank_sources
 from app.schemas.internal import AnalysisContext
 from app.schemas.response import AnalyzeResponse, ModelUsage, ServiceStatus, Source
@@ -37,12 +38,20 @@ class _AnalysisTiming:
         finally:
             self.metadata[f"{name}_ms"] = round((self.clock() - started) * 1000)
 
-    def log(self):
+    def finish(self, model_usage: ModelUsage):
+        total_ms = round((self.clock() - self.started) * 1000)
+        if (metrics := current_metrics.get()) is not None:
+            metrics.extract_ms = self.metadata["extract_ms"]
+            metrics.evidence_ms = self.metadata["evidence_ms"]
+            metrics.assess_ms = self.metadata["assess_ms"]
+            metrics.total_ms = total_ms
+            metrics.extraction_model = model_usage.extraction_model
+            metrics.assessment_model = model_usage.assessment_model
         logger.info(
             "analysis_timing",
             extra={
                 **self.metadata,
-                "total_ms": round((self.clock() - self.started) * 1000),
+                "total_ms": total_ms,
             },
         )
 
@@ -63,7 +72,7 @@ class AnalysisOrchestrator:
             response.model_usage = model_usage
             return response
         finally:
-            timing.log()
+            timing.finish(model_usage)
 
     async def _analyze(
         self, ctx: AnalysisContext, model_usage: ModelUsage, timing: _AnalysisTiming

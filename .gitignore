@@ -47,6 +47,8 @@ logs/
 
 # Project specific
 scaffold.py
+/backend/data/metrics.db
+/backend/data/metrics.db-*
 
 # OS specific
 Thumbs.db

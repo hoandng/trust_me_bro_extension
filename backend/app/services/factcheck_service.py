@@ -5,6 +5,7 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
+from app.core.metrics import current_metrics
 from app.schemas.internal import AnalysisContext, ServiceResult
 from app.schemas.response import Source
 from app.services.base_service import BaseService, safe_execute
@@ -150,6 +151,9 @@ class FactCheckService(BaseService):
             params["languageCode"] = ctx.lang
 
         try:
+            metrics = current_metrics.get()
+            if metrics is not None:
+                metrics.factcheck_calls += 1
             response = await self._client.get(url, params=params)
             response.raise_for_status()
             data = response.json()
@@ -159,6 +163,8 @@ class FactCheckService(BaseService):
             # If empty and we used language code, retry without language code
             if not claims and ctx.lang:
                 params.pop("languageCode", None)
+                if metrics is not None:
+                    metrics.factcheck_calls += 1
                 response = await self._client.get(url, params=params)
                 response.raise_for_status()
                 data = response.json()

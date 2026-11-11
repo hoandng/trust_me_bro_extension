@@ -1,21 +1,27 @@
 import { getFromBackend } from '../../../infrastructure/api/backend-client';
 import { getPreferredModel, savePreferredModel } from '../model-preference';
-import type { ExtensionMessage } from '../../../shared/messages';
-import { getTabState, setTabState, subscribeToTabStates } from '../state-store';
+import type { AnalysisTabMessage } from '../../../shared/messages';
+import { subscribeToTabStates } from '../state-store';
+import type { TabAnalysisState } from '../types';
 import { bindAnalysisView, renderAnalysisState } from './render';
 
 export async function initAnalysisPanel(): Promise<void> {
   void initModelSelector();
   let currentTabId: number | undefined;
+  let loadVersion = 0;
 
   async function loadState(tabId: number) {
-    const state = await getTabState(tabId);
+    const version = ++loadVersion;
+    const message: AnalysisTabMessage = { type: 'GET_ANALYSIS_STATE', tabId };
+    const state = (await chrome.runtime.sendMessage(message)) as TabAnalysisState | undefined;
     // Bỏ qua dữ liệu trả về muộn nếu người dùng đã đổi tab.
-    if (tabId === currentTabId) renderAnalysisState(state || { status: 'idle' });
+    if (tabId === currentTabId && version === loadVersion) {
+      renderAnalysisState(state || { status: 'idle' });
+    }
   }
 
-  const unsubscribe = subscribeToTabStates((tabId, state) => {
-    if (tabId === currentTabId) renderAnalysisState(state);
+  const unsubscribe = subscribeToTabStates((tabId) => {
+    if (tabId === currentTabId) void loadState(tabId).catch(console.error);
   });
   window.addEventListener('pagehide', unsubscribe);
 
@@ -36,17 +42,9 @@ export async function initAnalysisPanel(): Promise<void> {
   async function retryAnalysis() {
     const tabId = currentTabId;
     if (tabId === undefined) return;
-    const state = await getTabState(tabId);
-    if (state?.request) {
-      const message: ExtensionMessage = {
-        type: 'ANALYZE_REQUEST',
-        payload: state.request,
-        tabId,
-      };
-      await chrome.runtime.sendMessage(message);
-    } else {
-      await setTabState(tabId, { status: 'idle' });
-    }
+    const message: AnalysisTabMessage = { type: 'RETRY_ANALYSIS', tabId };
+    await chrome.runtime.sendMessage(message);
+    if (tabId === currentTabId) await loadState(tabId);
   }
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });

@@ -89,10 +89,10 @@ extension/
 2. Nút nổi hoặc nút bài viết Reddit gửi `ANALYZE_REQUEST` qua `chrome.runtime.sendMessage`.
 3. `entrypoints/background.ts` kiểm tra hợp đồng message bằng `isAnalyzeRequest()` rồi chuyển cho `handle-analysis.ts`.
 4. Handler mở side panel ngay trong ngữ cảnh user gesture (`chrome.sidePanel.open({ tabId })`; nếu bị chặn sẽ đặt badge `!` màu đỏ trên icon tiện ích), đọc model ưu tiên `preferredGeminiModel` từ `chrome.storage.local` cho lượt này, ghi trạng thái `loading` vào `chrome.storage.session` và gọi `analysis-api.ts`. HTTP client gửi `POST /api/v1/analyze` kèm `X-API-Key`, `model_id` (nếu có) và timeout 60 giây.
-5. `map-response.ts` chuyển `verdict` (`likely_true` → `Thật`, `likely_false` → `Giả`, `mixed` → `Thiếu ngữ cảnh`, `unverified` → `Không thể kiểm chứng`), quy đổi `confidence_score` sang phần trăm (`0–100`), tổng hợp `service_status` (`error` nếu có bất kỳ dịch vụ nào lỗi) và giữ nguyên `model_usage`. Handler ghi trạng thái `success` hoặc `error`.
-6. Side panel theo dõi `tabState_<tabId>` trong `chrome.storage.session` theo tab đang active và tự xóa badge `!` khi mở. Khi khởi tạo, panel cũng gọi `GET /api/v1/models` để điền bộ chọn model. Nút **Thử lại** gửi lại `ANALYZE_REQUEST` kèm `tabId` và handler đọc lại lựa chọn model mới nhất.
+5. `map-response.ts` chuyển `verdict` (`likely_true` → `Thật`, `likely_false` → `Giả`, `mixed` → `Thiếu ngữ cảnh`, `unverified` → `Không thể kiểm chứng`), quy đổi `confidence_score` sang phần trăm (`0–100`), tổng hợp `service_status` và giữ `request_id` cùng `model_usage`. Handler ghi trạng thái `success` hoặc `error`.
+6. Side panel theo dõi `tabState_<tabId>` trong `chrome.storage.session` và dùng `GET_ANALYSIS_STATE` để đọc nội dung hiển thị từ bộ nhớ của service worker. Khi khởi tạo, panel gọi `GET /api/v1/models` để điền bộ chọn model. Nút **Thử lại** gửi `RETRY_ANALYSIS` cho tab đang mở để dùng lại payload còn trong RAM và đọc lựa chọn model mới nhất.
 
-`chrome.storage.session` hiện giữ trạng thái giao diện theo tab; **chưa có cache kết quả**. Không dùng biến toàn cục của service worker làm nơi lưu trạng thái cần giữ giữa các lần worker chạy.
+`chrome.storage.session` chỉ giữ trạng thái và UUID theo tab. Request gốc và kết quả chi tiết có thể trích nguyên văn bài đăng nên chỉ nằm trong RAM của worker. Dữ liệu chi tiết mất khi tab đóng, điều hướng hoặc worker khởi động lại. Khi đó người dùng có thể chọn lại bài đăng để phân tích.
 
 **Mở rộng:**
 
@@ -105,7 +105,7 @@ Chi tiết phát triển, debug và kiểm tra thủ công: [`extension/README.m
 
 ### 2.2. Backend API (Server)
 - **Framework:** Python + FastAPI
-- **Kiến trúc API:** `GET /health` kiểm tra tiến trình. `GET /api/v1/models` và `POST /api/v1/analyze` yêu cầu `X-API-Key`, trong đó giới hạn lượt phân tích chỉ áp dụng cho `POST /api/v1/analyze`.
+- **Kiến trúc API:** `GET /health` kiểm tra tiến trình. `GET /api/v1/models`, `POST /api/v1/analyze` và `POST /api/v1/feedback` yêu cầu `X-API-Key`. Hai endpoint POST dùng chung rate limit. `GET /api/v1/stats/summary` yêu cầu `X-Admin-API-Key` riêng.
 - **Cấu trúc thư mục thực tế:**
   ```
   backend/
@@ -163,9 +163,10 @@ Pipeline có một deadline chung theo đồng hồ monotonic, mặc định 25 
      - **Ưu tiên Fact Check.** Orchestrator chỉ xét nguồn Fact Check đầu tiên trong thứ tự gộp, với điều kiện nguồn đó đã được gửi cho Gemini, bước đánh giá thành công, `claim_text` không rỗng và `factcheck_match=true` cho đúng URL. Nếu `original_stance` là `supports` hoặc `refutes`, verdict ưu tiên tương ứng là `likely_true` hoặc `likely_false`. Khi verdict thực sự thay đổi, nâng `confidence_score` lên ít nhất `0.8`.
      - **Ràng buộc nhất quán:** Nếu `verdict` là `"likely_true"` hoặc `"likely_false"` mà `confidence_score < 0.5` thì nâng lên `0.5`; nếu `verdict == "unverified"` thì giới hạn `confidence_score = min(confidence_score, 0.4)`.
      - **Xử lý lỗi linh hoạt.** Một lượt tra cứu lỗi hoặc timeout được phản ánh qua `service_status` của provider tương ứng. Các lượt thành công vẫn đóng góp nguồn cho bước đánh giá.
-4. Trả về `verdict`, `confidence_score`, `explanation`, `sources`, `service_status` và `model_usage`. Ví dụ khi model ưu tiên chạm quota ở bước đánh giá:
+4. Trả về `request_id` (UUID v4), `verdict`, `confidence_score`, `explanation`, `sources`, `service_status` và `model_usage`. Ví dụ khi model ưu tiên chạm quota ở bước đánh giá:
    ```json
    {
+     "request_id": "88a7b1c8-fb0b-44a8-9f07-02008a8ad22f",
      "verdict": "likely_true",
      "confidence_score": 0.8,
      "explanation": "Nguồn tham khảo ủng hộ khẳng định.",
@@ -201,6 +202,12 @@ Pipeline có một deadline chung theo đồng hồ monotonic, mặc định 25 
 
 Mỗi bước Gemini bắt đầu từ model ưu tiên, thử theo vòng và bỏ qua model đang cooldown. HTTP `429` từ Gemini kích hoạt cooldown dùng chung theo model trong process. Nếu cả danh sách hết quota, endpoint phân tích trả `503` cùng `Retry-After`. Nếu bước đánh giá chuyển model, kết quả trích xuất đã có vẫn được sử dụng. Xem chi tiết biến môi trường và cách tính cooldown trong [hướng dẫn backend](backend/README.md#chọn-model-và-chuyển-model-khi-hết-quota).
 
+### 2.5. Số liệu phân tích và phản hồi
+
+Lifespan khởi tạo `backend/data/metrics.db` bằng `sqlite3`. Backend ghi một dòng theo UUID cho mỗi lượt vào pipeline, kể cả lượt degraded hoặc lỗi. Dòng ghi gồm thời điểm UTC, platform, độ dài văn bản, SHA-256 sau NFKC và gộp khoảng trắng, trạng thái HTTP, verdict, confidence, thời gian pipeline, model, số request đã thử gửi theo provider, usage trả về, `cache_hit` và chi phí USD ước tính. Lượt chưa có verdict dùng `null`. Gemini Interactions dùng `store=false`. Chỉ metadata đã chọn được chuyển đến SQLite và log.
+
+`POST /api/v1/feedback` cập nhật một phản hồi cho mỗi UUID đã có verdict. `GET /api/v1/stats/summary` tổng hợp trực tiếp từ SQLite. Tỷ lệ verdict chia theo số lượt có verdict. Độ trễ trung bình và p95 tính trên mọi lượt đã ghi. p95 lấy giá trị tại vị trí `ceil(0.95 × n)` sau khi sắp xếp. Chi phí trung bình chia theo số lượt ước tính được và tỷ lệ helpful chia theo số lượt đã phản hồi.
+
 ## 3. Bảo mật (quan trọng — đọc kỹ trước khi code)
 
 | Vấn đề | Giải pháp |
@@ -208,7 +215,7 @@ Mỗi bước Gemini bắt đầu từ model ưu tiên, thử theo vòng và b�
 | API key (Gemini, Tavily, Fact Check) | Chỉ cấu hình ở backend qua biến môi trường hoặc `backend/.env`. |
 | Giao tiếp Extension ↔ Backend | Local dùng HTTP trên loopback. Khi triển khai, cấu hình HTTPS ở tầng phục vụ backend. Extension gửi key riêng qua `X-API-Key`. |
 | Rate limiting | Backend đếm lượt phân tích theo IP, theo key và theo tổng lượt trong process. IP đến từ kết nối trực tiếp hoặc từ chuỗi `X-Forwarded-For` đã kiểm tra khi bật chế độ proxy tin cậy. |
-| Dữ liệu người dùng | Backend xử lý theo request, extension giữ nội dung và kết quả theo tab trong `chrome.storage.session` để hiển thị và thử lại. Xem giới hạn ghi log trong [checklist bảo mật](SECURITY_CHECKLIST.md). |
+| Dữ liệu người dùng | Backend xử lý nội dung theo request và lưu metadata số liệu vào SQLite. Extension giữ nội dung và kết quả chi tiết trong RAM, còn Chrome storage giữ trạng thái và UUID. Xem [checklist bảo mật](SECURITY_CHECKLIST.md). |
 | CORS | Backend bật CORS khi có `ALLOWED_ORIGINS`. Mỗi origin của extension có dạng `chrome-extension://<extension-id>`. |
 | Input validation | Backend kiểm tra độ dài văn bản và giới hạn `Content-Length`. Prompt Gemini đặt văn bản trong thẻ `<post>` và kiểm tra JSON đầu ra. |
 
@@ -223,7 +230,7 @@ Key tĩnh `VITE_EXTENSION_API_KEY` được nhúng vào bundle khi build và có
 | Tavily API | Search engine tối ưu cho AI, tìm nguồn tin liên quan real-time | Cần API key, có free tier |
 
 ## 5. Giới hạn/nợ kỹ thuật đã biết (bản demo)
-- Chưa có database → không lưu lịch sử, không cache → mỗi lần phân tích đều tốn API call thật (cân nhắc thêm cache ở bản sau để tiết kiệm chi phí).
+- SQLite dùng cho số liệu và feedback. Cache kết quả và lịch sử phân tích chưa triển khai.
 - Hỗ trợ Facebook và Reddit; DOM selector có thể hỏng khi nền tảng đổi giao diện → cần thiết kế adapter dễ sửa (mục 2.1).
 - Static API key giữa extension–backend chưa đủ an toàn cho production.
 - Bộ đếm lượt phân tích và cooldown Gemini nằm trong bộ nhớ của từng process và mất khi process khởi động lại.

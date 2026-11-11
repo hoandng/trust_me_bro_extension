@@ -7,6 +7,7 @@ from google.genai import types
 from pydantic import BaseModel, Field, ValidationError
 
 from app.core.config import settings
+from app.core.metrics import GeminiUsage, current_metrics
 from app.core.source_ranking import source_tier
 from app.prompts.gemini_prompts import ASSESS_PROMPT, EXTRACT_CLAIMS_PROMPT
 from app.schemas.response import ModelFallback, ModelUsage, Source
@@ -99,9 +100,16 @@ class GeminiService:
                 config = (
                     {"thinking_level": "low"} if model.startswith("gemini-3") else {}
                 )
+                metrics = current_metrics.get()
+                attempt = None
+                if metrics is not None:
+                    attempt = GeminiUsage(model=model)
+                    metrics.gemini_usage.append(attempt)
                 interaction = await self.client.aio.interactions.create(
-                    model=model, generation_config=config, **kwargs
+                    model=model, generation_config=config, store=False, **kwargs
                 )
+                if attempt is not None:
+                    attempt.record(getattr(interaction, "usage", None))
                 setattr(model_usage, f"{stage}_model", model)
                 return interaction
             except Exception as error:

@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, test } from 'node:test';
-import { handleAnalysisRequest } from '../src/features/analysis/background/handle-analysis';
+import {
+  forgetAnalysisTab, getLiveAnalysisState, handleAnalysisRequest, retryAnalysisForTab,
+} from '../src/features/analysis/background/handle-analysis';
 import { mapAnalysisResponse } from '../src/features/analysis/background/map-response';
 import {
   getTabState,
   setTabState,
   subscribeToTabStates,
 } from '../src/features/analysis/state-store';
-import { isAnalyzeRequest } from '../src/shared/messages';
+import { isAnalysisTabMessage, isAnalyzeRequest } from '../src/shared/messages';
 import type { AnalyzeRequestMessage } from '../src/shared/messages';
 import type { BackendAnalysisResponse } from '../src/features/analysis/types';
 
@@ -25,6 +27,7 @@ const request: AnalyzeRequestMessage = {
 };
 const sender: chrome.runtime.MessageSender = { tab: { id: 7 } as chrome.tabs.Tab };
 const backendResponse: BackendAnalysisResponse = {
+  request_id: '88a7b1c8-fb0b-44a8-9f07-02008a8ad22f',
   verdict: 'likely_true',
   confidence_score: 0.82,
   explanation: 'Có nguồn đối chứng.',
@@ -52,6 +55,11 @@ beforeEach(() => {
             for (const listener of listeners) listener({ [key]: { oldValue, newValue } });
           }
         },
+        remove: async (key: string) => {
+          const oldValue = values.get(key);
+          values.delete(key);
+          for (const listener of listeners) listener({ [key]: { oldValue } });
+        },
         onChanged: {
           addListener: (
             listener: (changes: Record<string, chrome.storage.StorageChange>) => void,
@@ -67,7 +75,8 @@ beforeEach(() => {
   } as unknown as typeof chrome;
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await Promise.all([forgetAnalysisTab(7), forgetAnalysisTab(8)]);
   globalThis.fetch = originalFetch;
   globalThis.chrome = originalChrome;
 });
@@ -78,6 +87,8 @@ test('chỉ nhận message có đúng hợp đồng phân tích', () => {
   assert.equal(isAnalyzeRequest({ ...request, tabId: '7' }), false);
   assert.equal(isAnalyzeRequest({ type: 'UNKNOWN' }), false);
   assert.equal(isAnalyzeRequest(null), false);
+  assert.equal(isAnalysisTabMessage({ type: 'GET_ANALYSIS_STATE', tabId: 7 }), true);
+  assert.equal(isAnalysisTabMessage({ type: 'RETRY_ANALYSIS', tabId: -1 }), false);
 });
 
 test('chuyển response backend sang dữ liệu UI và giữ cảnh báo service', () => {
@@ -86,6 +97,7 @@ test('chuyển response backend sang dữ liệu UI và giữ cảnh báo servic
   assert.equal(result.confidence, 82);
   assert.equal(result.sources[0].publisher, 'Nhà xuất bản');
   assert.equal(result.service_status, 'error');
+  assert.equal(result.request_id, backendResponse.request_id);
   assert.equal(
     mapAnalysisResponse({ ...backendResponse, verdict: 'unknown' }).verdict,
     'Không thể kiểm chứng',
@@ -95,8 +107,8 @@ test('chuyển response backend sang dữ liệu UI và giữ cảnh báo servic
 test('trạng thái và subscription tách biệt theo tab, có thể ngừng theo dõi', async () => {
   const observed: number[] = [];
   const unsubscribe = subscribeToTabStates((tabId) => observed.push(tabId));
-  await setTabState(7, { status: 'loading', request: request.payload });
-  await setTabState(8, { status: 'error', error: 'Lỗi tab khác' });
+  await setTabState(7, { status: 'loading' });
+  await setTabState(8, { status: 'error' });
   assert.equal((await getTabState(7))?.status, 'loading');
   assert.equal((await getTabState(8))?.status, 'error');
   assert.deepEqual(observed, [7, 8]);
@@ -118,21 +130,43 @@ test('yêu cầu đi qua loading → API → success, gửi đúng payload và h
   };
   const pending = handleAnalysisRequest(request, sender);
   await new Promise<void>((resolve) => setImmediate(resolve));
-  assert.equal((await getTabState(7))?.status, 'loading');
-  finishFetch(Response.json(backendResponse));
+  assert.deepEqual(await getTabState(7), { status: 'loading' });
+  finishFetch(Response.json({
+    ...backendResponse,
+    explanation: request.payload.text,
+    sources: [{ title: request.payload.text, url: request.payload.page_url }],
+  }));
   await pending;
-  assert.equal((await getTabState(7))?.status, 'success');
-  assert.equal((await getTabState(7))?.response?.confidence, 82);
+  assert.deepEqual(await getTabState(7), {
+    status: 'success', request_id: backendResponse.request_id,
+  });
+  assert.equal(getLiveAnalysisState(7)?.response?.confidence, 82);
+  assert.equal(getLiveAnalysisState(7)?.response?.explanation, request.payload.text);
+  assert.doesNotMatch(JSON.stringify([...values]), /Nội dung cần|facebook\.com/);
 });
 
 test('lỗi HTTP chuyển sang trạng thái error và giữ request để retry đúng tab', async () => {
   globalThis.fetch = async () => new Response(null, { status: 429 });
   await handleAnalysisRequest({ ...request, tabId: 8 }, sender);
-  const state = await getTabState(8);
+  assert.deepEqual(await getTabState(8), { status: 'error' });
+  const state = getLiveAnalysisState(8);
   assert.equal(state?.status, 'error');
   assert.equal(state?.error, 'Quá nhiều yêu cầu (429)');
   assert.deepEqual(state?.request, request.payload);
   assert.equal(await getTabState(7), undefined);
+
+  let attempts = 0;
+  globalThis.fetch = async (_url, options) => {
+    attempts += 1;
+    assert.deepEqual(JSON.parse(options?.body as string), request.payload);
+    return Response.json(backendResponse);
+  };
+  await retryAnalysisForTab(8);
+  assert.equal(getLiveAnalysisState(8)?.status, 'success');
+  await forgetAnalysisTab(8);
+  await retryAnalysisForTab(8);
+  assert.equal(attempts, 1);
+  assert.equal(getLiveAnalysisState(8), undefined);
 });
 
 test('lỗi kết nối được chuyển thành thông báo dễ hiểu', async () => {
@@ -141,7 +175,7 @@ test('lỗi kết nối được chuyển thành thông báo dễ hiểu', async
   };
   await handleAnalysisRequest(request, sender);
   assert.equal((await getTabState(7))?.status, 'error');
-  assert.match((await getTabState(7))?.error || '', /Lỗi kết nối/);
+  assert.match(getLiveAnalysisState(7)?.error || '', /Lỗi kết nối/);
 });
 
 test('model đã lưu được dùng cho request tiếp theo và ghi vào state', async () => {
@@ -152,7 +186,7 @@ test('model đã lưu được dùng cho request tiếp theo và ghi vào state'
     return Response.json(backendResponse);
   };
   await handleAnalysisRequest(request, sender);
-  assert.equal((await getTabState(7))?.request?.model_id, 'gemini-test');
+  assert.equal(getLiveAnalysisState(7)?.request?.model_id, 'gemini-test');
   assert.equal(values.get('preferredGeminiModel'), 'changed-during-request');
 });
 
@@ -162,5 +196,5 @@ test('giữ metadata model và thông báo hết quota từ backend', async () =
   assert.deepEqual(mapAnalysisResponse({ ...backendResponse, model_usage: usage }).model_usage, usage);
   globalThis.fetch = async () => Response.json({ detail: 'Tất cả model chạm hạn mức' }, { status: 503 });
   await handleAnalysisRequest(request, sender);
-  assert.equal((await getTabState(7))?.error, 'Tất cả model chạm hạn mức');
+  assert.equal(getLiveAnalysisState(7)?.error, 'Tất cả model chạm hạn mức');
 });

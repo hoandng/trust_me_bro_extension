@@ -6,7 +6,19 @@ export interface AnalyzeRequestMessage {
   tabId?: number;
 }
 
-export type ExtensionMessage = AnalyzeRequestMessage;
+export interface AnalysisTabMessage {
+  type: 'GET_ANALYSIS_STATE' | 'RETRY_ANALYSIS';
+  tabId: number;
+}
+
+export type ExtensionMessage = AnalyzeRequestMessage | AnalysisTabMessage;
+
+export function isAnalysisTabMessage(message: unknown): message is AnalysisTabMessage {
+  return !!message && typeof message === 'object' &&
+    'type' in message && (message.type === 'GET_ANALYSIS_STATE' || message.type === 'RETRY_ANALYSIS') &&
+    'tabId' in message && typeof message.tabId === 'number' &&
+    Number.isSafeInteger(message.tabId) && message.tabId >= 0;
+}
 
 export function isAnalyzeRequest(message: unknown): message is AnalyzeRequestMessage {
   if (!message || typeof message !== 'object' || !('type' in message)) return false;
