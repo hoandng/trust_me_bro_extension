@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from app.core.config import settings
-from app.schemas.response import Source
+from app.schemas.response import ModelUsage, Source
 from app.services.gemini_service import GeminiService, SourceStance
 from google.genai.errors import APIError
 from pydantic import ValidationError
@@ -286,36 +286,37 @@ async def test_quota_rotates_from_selected_model_and_shares_cooldown(
     mock_gemini_client, model_ring
 ):
     service = GeminiService()
-    service.select_model("gemini-b")
+    usage = ModelUsage(requested_model="gemini-b")
     mock_gemini_client.aio.interactions.create = AsyncMock(
         side_effect=[
             APIError(429, {"error": {"message": "Quota exceeded"}}),
             extraction_response(),
         ]
     )
-    assert await service.extract_claims("A claim") is not None
+    assert await service.extract_claims("A claim", model_usage=usage) is not None
     assert [
         c.kwargs["model"]
         for c in mock_gemini_client.aio.interactions.create.call_args_list
     ] == ["gemini-b", "gemini-c"]
-    assert service.model_usage.requested_model == "gemini-b"
-    assert service.model_usage.extraction_model == "gemini-c"
+    assert usage.requested_model == "gemini-b"
+    assert usage.extraction_model == "gemini-c"
     assert model_ring.remaining("gemini-b") > 0
 
-    # A new service (another request) skips the blocked model, but preserves preference.
-    next_service = GeminiService()
-    next_service.select_model("gemini-b")
+    # Request tiếp theo dùng cùng service và nhận cooldown chung.
+    next_usage = ModelUsage(requested_model="gemini-b")
     mock_gemini_client.aio.interactions.create = AsyncMock(
         return_value=extraction_response()
     )
-    await next_service.extract_claims("A claim")
+    await service.extract_claims("A claim", model_usage=next_usage)
     assert (
         mock_gemini_client.aio.interactions.create.call_args.kwargs["model"]
         == "gemini-c"
     )
     model_ring.block("gemini-c", 60)
     mock_gemini_client.aio.interactions.create.reset_mock()
-    await next_service.extract_claims("A claim")
+    await service.extract_claims(
+        "A claim", model_usage=ModelUsage(requested_model="gemini-b")
+    )
     assert (
         mock_gemini_client.aio.interactions.create.call_args.kwargs["model"]
         == "gemini-a"
@@ -389,11 +390,12 @@ async def test_assessment_fallback_does_not_repeat_extraction(
     mock_gemini_client.aio.interactions.create = AsyncMock(
         side_effect=[extraction_response(), APIError(429, {}), assessment]
     )
-    await service.extract_claims("A claim")
-    await service.assess("A claim", "claim", [])
+    usage = ModelUsage(requested_model="gemini-a")
+    await service.extract_claims("A claim", model_usage=usage)
+    await service.assess("A claim", "claim", [], model_usage=usage)
     assert mock_gemini_client.aio.interactions.create.call_count == 3
-    assert service.model_usage.extraction_model == "gemini-a"
-    assert service.model_usage.assessment_model == "gemini-b"
+    assert usage.extraction_model == "gemini-a"
+    assert usage.assessment_model == "gemini-b"
 
 
 def test_quota_cooldown_uses_retry_info_and_daily_reset():
@@ -466,6 +468,7 @@ async def test_interactions_status_code_body_error_rotates(
         side_effect=[InteractionsQuotaError(), extraction_response()]
     )
     service = GeminiService()
-    assert await service.extract_claims("A claim") is not None
+    usage = ModelUsage(requested_model="gemini-a")
+    assert await service.extract_claims("A claim", model_usage=usage) is not None
     assert model_ring.remaining("gemini-a") >= 119
-    assert service.model_usage.extraction_model == "gemini-b"
+    assert usage.extraction_model == "gemini-b"

@@ -27,6 +27,15 @@ class JSONFormatter(logging.Formatter):
             "message": message,
             "time": self.formatTime(record, self.datefmt),
         }
+        for key in (
+            "extract_ms",
+            "evidence_ms",
+            "assess_ms",
+            "total_ms",
+            "timeout_stage",
+        ):
+            if key in record.__dict__:
+                log_record[key] = record.__dict__[key]
         if record.exc_info:
             log_record["exc_info"] = (
                 "Redacted stacktrace"

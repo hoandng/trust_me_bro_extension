@@ -1,21 +1,19 @@
-import pytest
-from fastapi.testclient import TestClient
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
-from app.main import app
+import pytest
 from app.api.deps import get_orchestrator
-from app.schemas.internal import ServiceResult
-from app.schemas.response import Source, ModelUsage
 from app.core.config import settings
+from app.main import app
 from app.orchestrator.analysis_orchestrator import AnalysisOrchestrator
-from app.services.gemini_service import ClaimExtraction, Assessment
+from app.schemas.internal import ServiceResult
+from app.schemas.response import Source
+from app.services.gemini_service import Assessment, ClaimExtraction
+from fastapi.testclient import TestClient
 
 
 @pytest.fixture
 def mock_orchestrator():
     mock_gemini = AsyncMock()
-    mock_gemini.select_model = MagicMock()
-    mock_gemini.model_usage = ModelUsage(requested_model=settings.gemini_model)
     mock_factcheck = AsyncMock()
     mock_tavily = AsyncMock()
 
@@ -74,7 +72,8 @@ def mock_orchestrator():
 
 
 @pytest.fixture
-def client(mock_orchestrator):
+def client(mock_orchestrator, monkeypatch):
+    monkeypatch.setattr(settings, "gemini_api_key", "")
     app.dependency_overrides[get_orchestrator] = lambda: mock_orchestrator
     # We must also mock verify_api_key or pass it
     from app.api.deps import verify_api_key

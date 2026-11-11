@@ -1,10 +1,50 @@
 import asyncio
+import logging
+from contextlib import contextmanager
 
 from app.core.config import MAX_SEARCH_QUERIES, settings
 from app.core.source_ranking import rank_sources
 from app.schemas.internal import AnalysisContext
-from app.schemas.response import AnalyzeResponse, ServiceStatus, Source
+from app.schemas.response import AnalyzeResponse, ModelUsage, ServiceStatus, Source
 from app.services.gemini_model_pool import GeminiQuotaExhausted
+
+logger = logging.getLogger(__name__)
+TIMEOUT_EXPLANATION = (
+    "Đã hết thời gian phân tích. Chưa đủ cơ sở để xác minh thông tin này."
+)
+
+
+class _AnalysisTiming:
+    def __init__(self):
+        self.clock = asyncio.get_running_loop().time
+        self.started = self.clock()
+        self.deadline = self.started + settings.analysis_timeout_seconds
+        self.metadata = {
+            "extract_ms": None,
+            "evidence_ms": None,
+            "assess_ms": None,
+            "timeout_stage": None,
+        }
+
+    @contextmanager
+    def stage(self, name: str):
+        started = self.clock()
+        try:
+            yield
+        except TimeoutError:
+            self.metadata["timeout_stage"] = name
+            raise
+        finally:
+            self.metadata[f"{name}_ms"] = round((self.clock() - started) * 1000)
+
+    def log(self):
+        logger.info(
+            "analysis_timing",
+            extra={
+                **self.metadata,
+                "total_ms": round((self.clock() - self.started) * 1000),
+            },
+        )
 
 
 class AnalysisOrchestrator:
@@ -13,15 +53,33 @@ class AnalysisOrchestrator:
         self.factcheck_service = factcheck_service
         self.tavily_service = tavily_service
 
-    async def analyze(self, ctx: AnalysisContext) -> AnalyzeResponse:
+    async def analyze(
+        self, ctx: AnalysisContext, *, model_id: str | None = None
+    ) -> AnalyzeResponse:
+        timing = _AnalysisTiming()
+        model_usage = ModelUsage(requested_model=model_id or settings.gemini_model)
+        try:
+            response = await self._analyze(ctx, model_usage, timing)
+            response.model_usage = model_usage
+            return response
+        finally:
+            timing.log()
+
+    async def _analyze(
+        self, ctx: AnalysisContext, model_usage: ModelUsage, timing: _AnalysisTiming
+    ) -> AnalyzeResponse:
         # Initial status
         status_dict = {"factcheck": "empty", "tavily": "empty", "gemini": "ok"}
 
         # Stage 0: Extract Claims
         try:
-            extraction = await asyncio.wait_for(
-                self.gemini_service.extract_claims(ctx.text, ctx.lang), timeout=20.0
-            )
+            with timing.stage("extract"):
+                async with asyncio.timeout_at(
+                    min(timing.deadline, timing.clock() + 20)
+                ):
+                    extraction = await self.gemini_service.extract_claims(
+                        ctx.text, ctx.lang, model_usage=model_usage
+                    )
         except GeminiQuotaExhausted:
             raise
         except Exception:  # noqa: BLE001 - Keep degraded results without logging payloads.
@@ -29,7 +87,11 @@ class AnalysisOrchestrator:
             return AnalyzeResponse(
                 verdict="unverified",
                 confidence_score=0.0,
-                explanation="Lỗi khi phân tích nội dung. Không thể trích xuất thông tin.",
+                explanation=(
+                    TIMEOUT_EXPLANATION
+                    if timing.metadata["timeout_stage"] == "extract"
+                    else "Lỗi khi phân tích nội dung. Không thể trích xuất thông tin."
+                ),
                 sources=[],
                 service_status=ServiceStatus(**status_dict),
             )
@@ -69,19 +131,38 @@ class AnalysisOrchestrator:
             queries[claim] = None
 
         providers = {"factcheck": self.factcheck_service, "tavily": self.tavily_service}
-        jobs = [
-            (name, service.check(ctx.model_copy(update={"search_queries": [query]})))
-            for name, service in providers.items()
-            for query in queries
-        ]
         sources_by_provider: dict[str, list[Source]] = {name: [] for name in providers}
-        try:
-            results = await asyncio.wait_for(
-                asyncio.gather(*(job for _, job in jobs), return_exceptions=True),
-                timeout=15.0,
+        with timing.stage("evidence"):
+            remaining = timing.deadline - timing.clock()
+            jobs = (
+                [
+                    (
+                        name,
+                        asyncio.create_task(
+                            service.check(
+                                ctx.model_copy(update={"search_queries": [query]})
+                            )
+                        ),
+                    )
+                    for name, service in providers.items()
+                    for query in queries
+                ]
+                if remaining > 0
+                else []
             )
-        except TimeoutError:
-            results = [TimeoutError() for _ in jobs]
+            if jobs:
+                tasks = [task for _, task in jobs]
+                try:
+                    _, pending = await asyncio.wait(tasks, timeout=min(remaining, 15.0))
+                    if pending:
+                        timing.metadata["timeout_stage"] = "evidence"
+                finally:
+                    for task in tasks:
+                        if not task.done():
+                            task.cancel()
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+            else:
+                results = []
 
         for (name, _), result in zip(jobs, results, strict=True):
             if isinstance(result, BaseException):
@@ -101,6 +182,18 @@ class AnalysisOrchestrator:
             for source in rank_sources(list(unique_sources.values()))[:8]
         ]
 
+        if timing.clock() >= timing.deadline:
+            timing.metadata["timeout_stage"] = "evidence"
+            if sorted_sources:
+                status_dict["gemini"] = "error"
+            return AnalyzeResponse(
+                verdict="unverified",
+                confidence_score=0.0,
+                explanation=TIMEOUT_EXPLANATION,
+                sources=sorted_sources,
+                service_status=ServiceStatus(**status_dict),
+            )
+
         # If both FactCheck and Tavily are empty/error
         if not sorted_sources:
             return AnalyzeResponse(
@@ -113,10 +206,13 @@ class AnalysisOrchestrator:
 
         # Stage 2: Gemini Assess
         try:
-            assessment = await asyncio.wait_for(
-                self.gemini_service.assess(ctx.text, ctx.claim, sorted_sources),
-                timeout=20.0,
-            )
+            with timing.stage("assess"):
+                async with asyncio.timeout_at(
+                    min(timing.deadline, timing.clock() + 20)
+                ):
+                    assessment = await self.gemini_service.assess(
+                        ctx.text, ctx.claim, sorted_sources, model_usage=model_usage
+                    )
         except GeminiQuotaExhausted:
             raise
         except Exception:  # noqa: BLE001 - Keep degraded results without logging payloads.
@@ -124,7 +220,11 @@ class AnalysisOrchestrator:
             return AnalyzeResponse(
                 verdict="unverified",
                 confidence_score=0.0,
-                explanation="Lỗi khi đánh giá bằng chứng thu thập được.",
+                explanation=(
+                    TIMEOUT_EXPLANATION
+                    if timing.metadata["timeout_stage"] == "assess"
+                    else "Lỗi khi đánh giá bằng chứng thu thập được."
+                ),
                 sources=sorted_sources,
                 service_status=ServiceStatus(**status_dict),
             )

@@ -69,7 +69,7 @@ Cập nhật `backend/.env` với các API key của dịch vụ và đặt `EXT
 Để chạy backend (FastAPI):
 
 ```bash
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --no-proxy-headers
 ```
 
 Server chạy ở `http://127.0.0.1:8000`. Dùng `GET /health` để kiểm tra backend đã khởi động.

@@ -1,6 +1,6 @@
 import os
 
-from pydantic import Field
+from pydantic import Field, IPvAnyNetwork
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 env_path = os.path.abspath(
@@ -31,9 +31,12 @@ class Settings(BaseSettings):
     allowed_origins: str = ""
 
     rate_limit_per_minute_ip: int = 10
+    trust_proxy_headers: bool = False
+    trusted_proxy_networks: list[IPvAnyNetwork] = Field(default_factory=list)
     rate_limit_per_day_key: int = 100
     daily_analyze_limit_global: int = 1000
     max_body_size_bytes: int = 8192
+    analysis_timeout_seconds: float = Field(default=25.0, gt=0, allow_inf_nan=False)
 
     env: str = "development"
 

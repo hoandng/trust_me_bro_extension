@@ -6,8 +6,13 @@
 - ✅ Middleware kiểm tra `Content-Length` và trả `413` khi vượt `MAX_BODY_SIZE_BYTES` (mặc định 8192 byte). Giới hạn này dựa trên giá trị header khai báo. Schema phân tích kiểm tra độ dài `text` và từ chối `model_id` ngoài danh sách cấu hình bằng `422`.
 - ✅ Middleware gắn `X-Content-Type-Options`, `X-Frame-Options`, `X-XSS-Protection` và `Strict-Transport-Security` lên response đi qua `call_next`.
 - ✅ `ENV=production` tắt `/docs`, `/redoc` và `/openapi.json`.
-- ✅ Exception handler chung trả `{"detail": "Internal server error"}` và ghi thông báo lỗi chung vào application log (không ghi stacktrace). `FactCheckService` và `TavilySearchService` chủ động thay thế `api_key` bằng `***` trong thông báo lỗi nếu xảy ra ngoại lệ HTTP/mạng.
-- ⚠️ Formatter JSON trong `app/core/logging.py` tự động che `api_key`, `Authorization: Bearer`, `X-API-Key` và ẩn stacktrace ở mức `ERROR`/`CRITICAL`. Route chỉ log nền tảng và độ dài văn bản, nhưng nhánh lỗi trong `GeminiService` vẫn ghi chuỗi exception hoặc lỗi validation, có thể chứa một phần nội dung trả về từ dịch vụ.
+- ✅ Exception handler chung trả `{"detail": "Internal server error"}` và ghi thông báo lỗi chung. Log JSON ghi thời gian từng bước và tên bước bị timeout. Log INFO của HTTPX được tắt vì URL Fact Check có thể chứa truy vấn. Các nhánh lỗi Gemini ghi tên thao tác và số lần thử.
+
+## Reverse proxy
+
+- ✅ `TRUST_PROXY_HEADERS=false` mặc định dùng IP kết nối trực tiếp. Khi bật, backend chỉ đọc `X-Forwarded-For` từ kết nối có IP thuộc `TRUSTED_PROXY_NETWORKS`.
+- ✅ Backend duyệt các phần tử từ phải sang trái, bỏ qua proxy tin cậy và dùng IP hợp lệ đầu tiên ngoài danh sách. Nếu thiếu header, gặp giá trị không hợp lệ ở phần đang kiểm tra hoặc toàn chuỗi đều là proxy tin cậy, backend dùng IP kết nối trực tiếp.
+- Khi triển khai, chạy Uvicorn với `--no-proxy-headers` để IP kết nối không bị thay trước khi FastAPI kiểm tra. Giới hạn truy cập backend cho proxy đã cấu hình và chỉ khai báo IP/CIDR của proxy do bạn quản lý. Proxy ở biên ghi đè `X-Forwarded-For` từ client, các proxy phía sau nối IP kết nối trước vào cuối chuỗi.
 
 ## Extension
 - ✅ `vite.config.ts` cấp `sidePanel`, `storage` và host permissions cho Facebook, Reddit và backend. Tài nguyên công khai là icon trên Facebook và Reddit.

@@ -5,7 +5,7 @@
 ## Trạng thái hiện tại
 
 - **Giai đoạn:** MVP (demo) có adapter Facebook và Reddit, hỗ trợ chọn model Gemini trong side panel.
-- **Cập nhật lần cuối:** 2026-11-10
+- **Cập nhật lần cuối:** 2026-11-11
 
 ## Mục tiêu tổng thể
 
@@ -43,6 +43,7 @@ Mục tiêu: extension dùng được mượt mà, xử lý lỗi tốt, sẵn s
 - [x] Viết test tự động cho backend (mock 3 API ngoài)
 - [x] A1: Chuẩn hóa rating Fact Check tiếng Anh và tiếng Việt, giữ stance gốc và chỉ cho phép nguồn Fact Check đầu tiên đổi verdict khi khớp khẳng định. Có test hồi quy cho `Not true`, stance gốc và điều kiện khớp claim.
 - [x] A2. Tra cứu song song tối đa hai truy vấn với trần request, xếp nguồn theo tier và dùng ngày xuất bản để đánh giá dấu hiệu tin cũ đăng lại. Có test mock cho fallback, giới hạn request, thứ tự nguồn và ngày xuất bản.
+- [x] A3. Dùng chung kết nối theo lifespan, giới hạn theo IP đã xác minh qua proxy, áp ngân sách phân tích mặc định 25 giây và ghi thời gian từng bước.
 
 ## Milestone 3: Nâng cấp tính năng (theo yêu cầu ban đầu)
 

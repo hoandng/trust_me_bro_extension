@@ -75,14 +75,15 @@ RATING_LOOKUP = {
 class FactCheckService(BaseService):
     def __init__(self, client: httpx.AsyncClient | None = None):
         # Allow passing an existing client for lifespan reuse
-        self._client = client or httpx.AsyncClient(timeout=10.0)
+        self._owns_client = client is None
+        self._client = client if client is not None else httpx.AsyncClient(timeout=10.0)
 
     @property
     def name(self) -> str:
         return "factcheck"
 
     async def aclose(self):
-        if self._client:
+        if self._owns_client:
             await self._client.aclose()
 
     def _determine_stance(self, rating: str) -> str:

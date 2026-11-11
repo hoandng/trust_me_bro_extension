@@ -6,12 +6,96 @@ import httpx
 import pytest
 import respx
 from app.core.config import settings
+from app.core.logging import JSONFormatter
 from app.orchestrator.analysis_orchestrator import AnalysisOrchestrator
 from app.schemas.internal import AnalysisContext, ServiceResult
 from app.schemas.response import Source
 from app.services.factcheck_service import FactCheckService
 from app.services.gemini_service import Assessment, ClaimExtraction
 from app.services.tavily_service import TavilySearchService
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["extract", "evidence", "assess"])
+async def test_analysis_deadline_cancels_stage_and_logs_metadata(
+    stage, monkeypatch, caplog
+):
+    monkeypatch.setattr(settings, "analysis_timeout_seconds", 0.15)
+    gemini = MockGeminiService()
+    tavily = MockTavilyService()
+    cancelled = asyncio.Event()
+    slow_stage_started = asyncio.Event()
+
+    async def wait_past_deadline(*args, **kwargs):
+        slow_stage_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    if stage == "extract":
+        gemini.extract_claims = AsyncMock(side_effect=wait_past_deadline)
+    elif stage == "evidence":
+        tavily.check = AsyncMock(side_effect=wait_past_deadline)
+        gemini.assess = AsyncMock()
+    else:
+        gemini.assess = AsyncMock(side_effect=wait_past_deadline)
+
+    post = "PRIVATE_SYNTHETIC_POST_FOR_TIMEOUT"
+    with caplog.at_level("INFO"):
+        result = await asyncio.wait_for(
+            AnalysisOrchestrator(gemini, MockFactCheckService(), tavily).analyze(
+                AnalysisContext(text=post)
+            ),
+            timeout=2,
+        )
+
+    assert slow_stage_started.is_set()
+    assert cancelled.is_set()
+    assert result.verdict == "unverified"
+    assert "hết thời gian" in result.explanation
+    assert len(result.sources) == {"extract": 0, "evidence": 1, "assess": 2}[stage]
+    if stage == "evidence":
+        assert result.service_status.tavily == "error"
+        assert result.service_status.factcheck == "ok"
+        gemini.assess.assert_not_awaited()
+    else:
+        assert result.service_status.gemini == "error"
+
+    (record,) = [record for record in caplog.records if record.msg == "analysis_timing"]
+    line = JSONFormatter().format(record)
+    metadata = json.loads(line)
+    assert metadata["timeout_stage"] == stage
+    assert metadata[f"{stage}_ms"] >= 0
+    assert metadata["total_ms"] >= metadata[f"{stage}_ms"]
+    if stage != "assess":
+        assert metadata["assess_ms"] is None
+    assert post not in line
+
+
+@pytest.mark.asyncio
+async def test_assess_uses_remaining_budget_after_extract(monkeypatch):
+    monkeypatch.setattr(settings, "analysis_timeout_seconds", 0.24)
+    gemini = MockGeminiService()
+    extract, assess = gemini.extract_claims, gemini.assess
+
+    async def delayed_extract(*args, **kwargs):
+        await asyncio.sleep(0.12)
+        return await extract(*args, **kwargs)
+
+    async def delayed_assess(*args, **kwargs):
+        await asyncio.sleep(0.17)
+        return await assess(*args, **kwargs)
+
+    gemini.extract_claims = AsyncMock(side_effect=delayed_extract)
+    gemini.assess = AsyncMock(side_effect=delayed_assess)
+    result = await AnalysisOrchestrator(
+        gemini, MockFactCheckService(), MockTavilyService()
+    ).analyze(AnalysisContext(text="Synthetic post"))
+
+    gemini.assess.assert_awaited_once()
+    assert result.verdict == "unverified"
+    assert len(result.sources) == 2
 
 
 def gemini_with_queries(queries):
@@ -308,7 +392,7 @@ class MockGeminiService:
         self.assess_error = assess_error
 
     async def extract_claims(
-        self, text: str, lang: str | None = None
+        self, text: str, lang: str | None = None, *, model_usage=None
     ) -> ClaimExtraction | None:
         if self.extract_error:
             raise RuntimeError("Mock Extract Error")
@@ -325,7 +409,9 @@ class MockGeminiService:
             is_checkable=True,
         )
 
-    async def assess(self, text: str, claim: str, evidence: list) -> Assessment:
+    async def assess(
+        self, text: str, claim: str, evidence: list, *, model_usage=None
+    ) -> Assessment:
         if self.assess_error:
             raise RuntimeError("Mock Assess Error")
 

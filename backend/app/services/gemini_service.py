@@ -1,5 +1,4 @@
 import logging
-import time
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
@@ -80,23 +79,20 @@ class GeminiService:
             self.client = None
             logger.warning("Gemini API key is missing.")
 
-        self.select_model(None)
+    async def aclose(self) -> None:
+        if self.client is not None:
+            try:
+                await self.client.aio.aclose()
+            finally:
+                self.client.close()
 
-    def select_model(self, model: str | None):
-        self.model = model or settings.gemini_model
-        if self.model not in settings.available_gemini_models:
-            raise ValueError("Model is not enabled")
-        self.model_usage = ModelUsage(requested_model=self.model)
-
-    async def _create(self, stage: str, **kwargs):
+    async def _create(self, stage: str, model_usage: ModelUsage, **kwargs):
         models = settings.available_gemini_models
-        start = models.index(self.model)
+        start = models.index(model_usage.requested_model)
         candidates = models[start:] + models[:start]
         for model in candidates:
             if model_pool.remaining(model):
-                self.model_usage.fallbacks.append(
-                    ModelFallback(stage=stage, model=model)
-                )
+                model_usage.fallbacks.append(ModelFallback(stage=stage, model=model))
                 continue
             try:
                 # Thinking configuration differs between model generations.
@@ -106,30 +102,31 @@ class GeminiService:
                 interaction = await self.client.aio.interactions.create(
                     model=model, generation_config=config, **kwargs
                 )
-                setattr(self.model_usage, f"{stage}_model", model)
+                setattr(model_usage, f"{stage}_model", model)
                 return interaction
             except Exception as error:
                 # Interactions SDK versions use status_code/body; older SDKs use code/details.
                 if getattr(error, "status_code", getattr(error, "code", None)) != 429:
                     raise
                 model_pool.block(model, quota_cooldown(error))
-                self.model_usage.fallbacks.append(
-                    ModelFallback(stage=stage, model=model)
-                )
+                model_usage.fallbacks.append(ModelFallback(stage=stage, model=model))
                 logger.warning("Gemini quota reached for model %s", model)
         raise GeminiQuotaExhausted(
             min(model_pool.remaining(model) or 1 for model in candidates)
         )
 
     async def extract_claims(
-        self, text: str, lang: str | None = None
+        self,
+        text: str,
+        lang: str | None = None,
+        *,
+        model_usage: ModelUsage | None = None,
     ) -> ClaimExtraction | None:
         if not self.client:
             logger.error("Gemini API key not configured")
             return None
 
-        start_time = time.monotonic()
-        text_len = len(text)
+        model_usage = model_usage or ModelUsage(requested_model=settings.gemini_model)
 
         prompt = f"<post>\n{text}\n</post>"
 
@@ -145,6 +142,7 @@ class GeminiService:
             try:
                 interaction = await self._create(
                     "extraction",
+                    model_usage,
                     system_instruction=EXTRACT_CLAIMS_PROMPT,
                     input=prompt,
                     response_format=response_format,
@@ -152,14 +150,7 @@ class GeminiService:
 
                 raw_output = interaction.output_text
                 if raw_output:
-                    result = ClaimExtraction.model_validate_json(raw_output)
-
-                    elapsed = int((time.monotonic() - start_time) * 1000)
-                    logger.info(
-                        f"extract_claims done: len={text_len}, time={elapsed}ms, checkable={result.is_checkable}"
-                    )
-
-                    return result
+                    return ClaimExtraction.model_validate_json(raw_output)
             except GeminiQuotaExhausted:
                 raise
             except ValidationError:
@@ -167,14 +158,17 @@ class GeminiService:
             except Exception:  # noqa: BLE001 - Keep degraded results without logging payloads.
                 logger.error("Error in extract_claims on attempt %s", attempt + 1)
 
-        elapsed = int((time.monotonic() - start_time) * 1000)
-        logger.error(f"extract_claims failed after 2 attempts. time={elapsed}ms")
+        logger.error("extract_claims failed after 2 attempts")
         return None
 
-    async def assess(self, text: str, claim: str, evidence: list[Source]) -> Assessment:
-        start_time = time.monotonic()
-        text_len = len(text)
-
+    async def assess(
+        self,
+        text: str,
+        claim: str,
+        evidence: list[Source],
+        *,
+        model_usage: ModelUsage | None = None,
+    ) -> Assessment:
         if not self.client:
             logger.error("Gemini API key not configured")
             return Assessment(
@@ -185,6 +179,7 @@ class GeminiService:
                 status="error",
             )
 
+        model_usage = model_usage or ModelUsage(requested_model=settings.gemini_model)
         evidence_text = ""
         valid_urls = set()
         for i, src in enumerate(evidence):
@@ -216,6 +211,7 @@ class GeminiService:
             try:
                 interaction = await self._create(
                     "assessment",
+                    model_usage,
                     system_instruction=ASSESS_PROMPT,
                     input=input_text,
                     response_format=response_format,
@@ -231,11 +227,6 @@ class GeminiService:
                     ]
                     result.source_stances = filtered_stances
 
-                    elapsed = int((time.monotonic() - start_time) * 1000)
-                    logger.info(
-                        f"assess done: text_len={text_len}, time={elapsed}ms, verdict={result.verdict}"
-                    )
-
                     return result
             except GeminiQuotaExhausted:
                 raise
@@ -244,8 +235,7 @@ class GeminiService:
             except Exception:  # noqa: BLE001 - Keep degraded results without logging payloads.
                 logger.error("Error in assess on attempt %s", attempt + 1)
 
-        elapsed = int((time.monotonic() - start_time) * 1000)
-        logger.error(f"assess failed after 2 attempts. time={elapsed}ms")
+        logger.error("assess failed after 2 attempts")
         return Assessment(
             verdict="unverified",
             confidence_score=0.0,

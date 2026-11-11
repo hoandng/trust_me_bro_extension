@@ -140,9 +140,12 @@ Chi tiết phát triển, debug và kiểm tra thủ công: [`extension/README.m
 
 - **Vì sao module hoá theo `services/` + `orchestrator/`:**
   - Fact Check và Tavily dùng chung `BaseService.check(ctx)` để tra cứu. `GeminiService` có hai phương thức riêng là `extract_claims` và `assess`.
-  - `get_orchestrator()` tạo các service cho từng request. Orchestrator điều phối pipeline, còn từng service xử lý HTTP/SDK và chuyển kết quả về kiểu dữ liệu nội bộ.
+  - FastAPI lifespan tạo orchestrator và các service một lần mỗi worker. Fact Check và Tavily dùng chung một `httpx.AsyncClient`. Gemini dùng chung SDK client. `get_orchestrator()` lấy orchestrator từ `app.state` và lifespan đóng client khi shutdown. Mỗi lượt phân tích truyền riêng lựa chọn model và `model_usage`.
 
 ### 2.3. Luồng xử lý tại Orchestrator
+
+Pipeline có một deadline chung theo đồng hồ monotonic, mặc định 25 giây qua `ANALYSIS_TIMEOUT_SECONDS`. Giới hạn của từng bước được cắt theo thời gian còn lại. Khi hết ngân sách, orchestrator hủy tác vụ còn chờ và trả `unverified` kèm nguồn đã về nếu có. Log JSON ghi `extract_ms`, `evidence_ms`, `assess_ms`, `total_ms` và `timeout_stage`. Thời gian của bước chưa chạy là `null`.
+
 1. **Giai đoạn 0 (Trích xuất & Lọc):**
    - `gemini_service.extract_claims` tìm khẳng định chính (`main_claim`), ngôn ngữ (`detected_lang`), tối đa 3 truy vấn tìm kiếm (`search_queries`) và cờ `is_checkable`. Bước này có timeout 20 giây ở orchestrator (15 giây mỗi lượt gọi SDK, tối đa 2 lần thử).
    - Nếu trích xuất lỗi hoặc rỗng → trả ngay `unverified` (`confidence_score=0.0`, `service_status.gemini="error"`).
@@ -204,7 +207,7 @@ Mỗi bước Gemini bắt đầu từ model ưu tiên, thử theo vòng và b�
 |---|---|
 | API key (Gemini, Tavily, Fact Check) | Chỉ cấu hình ở backend qua biến môi trường hoặc `backend/.env`. |
 | Giao tiếp Extension ↔ Backend | Local dùng HTTP trên loopback. Khi triển khai, cấu hình HTTPS ở tầng phục vụ backend. Extension gửi key riêng qua `X-API-Key`. |
-| Rate limiting | Backend đếm lượt phân tích theo IP, theo key và theo tổng lượt trong process. |
+| Rate limiting | Backend đếm lượt phân tích theo IP, theo key và theo tổng lượt trong process. IP đến từ kết nối trực tiếp hoặc từ chuỗi `X-Forwarded-For` đã kiểm tra khi bật chế độ proxy tin cậy. |
 | Dữ liệu người dùng | Backend xử lý theo request, extension giữ nội dung và kết quả theo tab trong `chrome.storage.session` để hiển thị và thử lại. Xem giới hạn ghi log trong [checklist bảo mật](SECURITY_CHECKLIST.md). |
 | CORS | Backend bật CORS khi có `ALLOWED_ORIGINS`. Mỗi origin của extension có dạng `chrome-extension://<extension-id>`. |
 | Input validation | Backend kiểm tra độ dài văn bản và giới hạn `Content-Length`. Prompt Gemini đặt văn bản trong thẻ `<post>` và kiểm tra JSON đầu ra. |

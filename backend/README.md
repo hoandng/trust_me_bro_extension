@@ -26,7 +26,7 @@ cp .env.example .env  # PowerShell: Copy-Item .env.example .env
 ## Chạy server
 
 ```bash
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --no-proxy-headers
 ```
 
 - Kiểm tra trạng thái bằng `GET /health`.
@@ -41,6 +41,14 @@ uvicorn app.main:app --reload
 | `POST /api/v1/analyze` | Yêu cầu `X-API-Key`. Nhận `text` dài 20–2000 ký tự, `platform` (`facebook`, `reddit`, `x`) và các trường tùy chọn `page_url`, `lang`, `model_id`. |
 
 Các giới hạn `RATE_LIMIT_PER_MINUTE_IP` (10), `RATE_LIMIT_PER_DAY_KEY` (100) và `DAILY_ANALYZE_LIMIT_GLOBAL` (1000 mỗi process) áp dụng cho phân tích. Khi vượt giới hạn, API trả `429` cùng `Retry-After`. `GET /api/v1/models` chỉ xác thực key. Xem [kiến trúc và ví dụ response](../ARCHITECTURE.md#23-luồng-xử-lý-tại-orchestrator).
+
+`ANALYSIS_TIMEOUT_SECONDS` là ngân sách chung của pipeline, mặc định 25 giây. Khi hết ngân sách, API trả `200` với verdict `unverified`, thông báo hết thời gian và nguồn đã thu được nếu có.
+
+## Chạy sau reverse proxy
+
+Giữ `--no-proxy-headers` khi chạy Uvicorn để FastAPI nhận được IP kết nối trực tiếp. Mặc định rate limit dùng IP này. Để dùng IP người dùng, bật `TRUST_PROXY_HEADERS=true` và đặt `TRUSTED_PROXY_NETWORKS` thành mảng JSON gồm IP hoặc CIDR của các proxy do bạn quản lý. Ví dụ, dùng `["127.0.0.1/32"]` nếu reverse proxy tin cậy kết nối từ địa chỉ đó.
+
+Proxy ở biên cần ghi đè `X-Forwarded-For` nhận từ client bằng IP kết nối mà proxy quan sát được. Các proxy tin cậy phía sau nối thêm IP của kết nối trước vào cuối chuỗi. Khi bật chế độ này, chỉ mở đường vào backend cho các proxy đã cấu hình. Xem chi tiết trong [checklist bảo mật](../SECURITY_CHECKLIST.md).
 
 ## Biến môi trường (`app/core/config.py`)
 
@@ -57,9 +65,12 @@ Các giới hạn `RATE_LIMIT_PER_MINUTE_IP` (10), `RATE_LIMIT_PER_DAY_KEY` (100
 | `EXTENSION_API_KEY` | `""` | Khóa xác thực nội bộ giữa Extension và Backend qua header `X-API-Key`. |
 | `ALLOWED_ORIGINS` | `""` | Danh sách origin được phép gọi CORS (phân tách bằng dấu phẩy, ví dụ `chrome-extension://<id>`). |
 | `RATE_LIMIT_PER_MINUTE_IP` | `10` | Giới hạn số lượt phân tích mỗi phút trên một IP. |
+| `TRUST_PROXY_HEADERS` | `false` | Cho phép dùng `X-Forwarded-For` khi kết nối đến từ một proxy tin cậy. |
+| `TRUSTED_PROXY_NETWORKS` | `[]` | Mảng JSON các IP hoặc CIDR của proxy tin cậy. |
 | `RATE_LIMIT_PER_DAY_KEY` | `100` | Giới hạn số lượt phân tích trong cửa sổ 24 giờ trên một `X-API-Key`. |
 | `DAILY_ANALYZE_LIMIT_GLOBAL` | `1000` | Hạn mức tổng số lượt phân tích mỗi ngày UTC trên một process (kill switch bảo vệ chi phí). |
 | `MAX_BODY_SIZE_BYTES` | `8192` | Dung lượng tối đa của request body (byte) kiểm tra qua `Content-Length`. |
+| `ANALYSIS_TIMEOUT_SECONDS` | `25` | Ngân sách tính bằng giây cho toàn bộ pipeline phân tích. |
 | `ENV` | `development` | Môi trường chạy (`production` sẽ tắt `/docs`, `/redoc` và `/openapi.json`). |
 
 ## Chạy Tests, Linter và Script thử nghiệm
@@ -103,7 +114,7 @@ backend chỉ dùng `GEMINI_MODEL`.
   backend chuyển sang model kế tiếp theo vòng, bỏ qua model đang cooldown.
 - Cooldown lấy giá trị lớn nhất giữa mức cấu hình (tối thiểu 1 giây), `RetryInfo`,
   `Retry-After` dạng số giây và thời gian đến nửa đêm Pacific nếu Gemini báo quota ngày.
-- Mỗi vòng thử từng model tối đa một lần. Mỗi bước AI có timeout 20 giây và tối đa
+- Mỗi vòng thử từng model tối đa một lần. Mỗi bước AI dùng tối đa 20 giây trong phần ngân sách còn lại và có tối đa
   hai lần thử khi đầu ra trống, JSON không hợp lệ hoặc gặp lỗi ngoài quota. Chỉ HTTP 429
   của Gemini mới đưa model vào cooldown và kích hoạt chuyển model.
 - Khi tất cả model chạm hạn mức, backend trả HTTP 503 với thông báo và header `Retry-After`.
