@@ -34,6 +34,7 @@ async function requestBackend<TResponse>(path: string, method: string, payload?:
       throw new Error(`Lỗi mạng (${response.status})`);
     }
 
+    if (response.status === 204) return undefined as TResponse;
     return (await response.json()) as TResponse;
   } catch (error) {
     if (error instanceof Error && (error.name === 'AbortError' || error instanceof TypeError)) {

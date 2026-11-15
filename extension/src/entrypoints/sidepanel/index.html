@@ -36,6 +36,10 @@
     </div>
 
     <div id="state-success" class="state-container hidden">
+      <div id="result-verdict" class="verdict-badge" role="status">
+        <span id="verdict-icon" aria-hidden="true"></span>
+        <h2 id="verdict-text"></h2>
+      </div>
       <p id="model-usage" class="card" aria-live="polite"></p>
       <!-- Cảnh báo lỗi service -->
       <div id="service-warning" class="warning-badge hidden" role="alert">
@@ -47,14 +51,6 @@
         <div class="text-preview-container">
           <p id="success-text-preview" class="text-preview"></p>
           <button id="btn-read-more" class="btn-link hidden" aria-expanded="false">Xem thêm</button>
-        </div>
-      </div>
-
-      <div class="verdict-container">
-        <strong>Kết luận: </strong>
-        <div id="result-verdict" class="verdict-badge" role="status">
-          <span id="verdict-icon" aria-hidden="true"></span>
-          <span id="verdict-text"></span>
         </div>
       </div>
 
@@ -95,9 +91,22 @@
       </div>
 
       <div class="actions">
-        <button id="btn-copy" class="btn-secondary" title="Sao chép kết quả">
-          📋 Sao chép kết quả
+        <button id="btn-copy" type="button" class="btn-secondary">
+          Sao chép bản tóm tắt để chia sẻ
         </button>
+        <p id="copy-status" class="action-status" role="status"></p>
+      </div>
+
+      <div id="feedback-actions" class="feedback-actions hidden">
+        <div class="feedback-buttons" role="group" aria-label="Đánh giá kết quả kiểm chứng">
+          <button id="btn-helpful" type="button" class="btn-secondary" aria-pressed="false">
+            Kết quả hữu ích
+          </button>
+          <button id="btn-not-helpful" type="button" class="btn-secondary" aria-pressed="false">
+            Kết quả chưa đúng
+          </button>
+        </div>
+        <p id="feedback-status" class="action-status" role="status"></p>
       </div>
     </div>
 

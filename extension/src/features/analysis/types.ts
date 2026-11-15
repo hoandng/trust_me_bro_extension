@@ -10,7 +10,8 @@ export interface SourceItem {
   url: string;
   publisher?: string;
   snippet?: string;
-  stance?: string;
+  stance?: 'supports' | 'refutes' | 'neutral';
+  publishedDate?: string;
 }
 
 export interface ModelUsage {
@@ -24,6 +25,7 @@ export interface AnalyzeResponse {
   request_id?: string;
   model_usage?: ModelUsage | null;
   verdict: 'Thật' | 'Giả' | 'Thiếu ngữ cảnh' | 'Không thể kiểm chứng';
+  conclusion: string;
   confidence: number;
   explanation: string;
   sources: SourceItem[];
@@ -42,7 +44,15 @@ export interface TabAnalysisState {
   request?: SelectionPayload;
   response?: AnalyzeResponse;
   error?: string;
+  feedback?: boolean;
 }
+
+export interface FeedbackSubmission {
+  request_id: string;
+  helpful: boolean;
+}
+
+export type FeedbackReply = { ok: true } | { ok: false; error: string };
 
 export interface BackendAnalysisResponse {
   request_id?: string;
@@ -53,10 +63,11 @@ export interface BackendAnalysisResponse {
   sources?: Array<{
     title: string;
     url: string;
-    publisher_name?: string;
-    publisher?: string;
-    snippet?: string;
-    stance?: string;
+    publisher_name?: string | null;
+    publisher?: string | null;
+    snippet?: string | null;
+    stance?: string | null;
+    published_date?: string | null;
   }>;
   service_status?: Record<string, string> | string;
 }

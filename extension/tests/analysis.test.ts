@@ -4,19 +4,23 @@ import {
   forgetAnalysisTab, getLiveAnalysisState, handleAnalysisRequest, retryAnalysisForTab,
 } from '../src/features/analysis/background/handle-analysis';
 import { mapAnalysisResponse } from '../src/features/analysis/background/map-response';
+import { buildShareSummary } from '../src/features/analysis/share-summary';
 import {
   getTabState,
   setTabState,
   subscribeToTabStates,
 } from '../src/features/analysis/state-store';
-import { isAnalysisTabMessage, isAnalyzeRequest } from '../src/shared/messages';
-import type { AnalyzeRequestMessage } from '../src/shared/messages';
-import type { BackendAnalysisResponse } from '../src/features/analysis/types';
+import { SIDEPANEL_PATH } from '../src/shared/config';
+import { isAnalysisTabMessage, isAnalyzeRequest, isSubmitFeedbackMessage } from '../src/shared/messages';
+import type { AnalyzeRequestMessage, SubmitFeedbackMessage } from '../src/shared/messages';
+import type { BackendAnalysisResponse, FeedbackReply } from '../src/features/analysis/types';
 
 const originalFetch = globalThis.fetch;
 const originalChrome = globalThis.chrome;
 const values = new Map<string, unknown>();
 const listeners = new Set<(changes: Record<string, chrome.storage.StorageChange>) => void>();
+type MessageListener = Parameters<typeof chrome.runtime.onMessage.addListener>[0];
+let messageListener: MessageListener | undefined;
 const request: AnalyzeRequestMessage = {
   type: 'ANALYZE_REQUEST',
   payload: {
@@ -70,8 +74,13 @@ beforeEach(() => {
         },
       },
     },
-    sidePanel: { open: async () => {}, setOptions: async () => {} },
+    sidePanel: { open: async () => {}, setOptions: async () => {}, setPanelBehavior: async () => {} },
     action: { setBadgeText: async () => {}, setBadgeBackgroundColor: async () => {} },
+    tabs: { onRemoved: { addListener: () => {} }, onUpdated: { addListener: () => {} } },
+    runtime: {
+      getURL: (path: string) => `chrome-extension://mock/${path}`,
+      onMessage: { addListener: (listener: MessageListener) => { messageListener = listener; } },
+    },
   } as unknown as typeof chrome;
 });
 
@@ -102,6 +111,131 @@ test('chuyển response backend sang dữ liệu UI và giữ cảnh báo servic
     mapAnalysisResponse({ ...backendResponse, verdict: 'unknown' }).verdict,
     'Không thể kiểm chứng',
   );
+});
+
+test('mapping kết luận đời thường và fallback cho verdict lạ', () => {
+  const expected = {
+    likely_true: 'Có vẻ đúng sự thật',
+    likely_false: 'Có vẻ sai sự thật',
+    mixed: 'Cần xem thêm ngữ cảnh',
+    unverified: 'Chưa đủ bằng chứng, đừng vội chia sẻ',
+    toString: 'Chưa đủ bằng chứng, đừng vội chia sẻ',
+  };
+  for (const [verdict, conclusion] of Object.entries(expected)) {
+    assert.equal(mapAnalysisResponse({ ...backendResponse, verdict }).conclusion, conclusion);
+  }
+});
+
+test('mapping tên nguồn, ngày xuất bản và lập trường', () => {
+  const { sources } = mapAnalysisResponse({
+    ...backendResponse,
+    sources: [
+      {
+        title: 'Bài báo', url: 'https://www.reuters.com/article', publisher: 'Reuters',
+        publisher_name: 'reuters.com', published_date: '2026-11-10', stance: 'supports',
+      },
+      {
+        title: 'Bài kiểm chứng', url: 'https://news.example.com/check',
+        published_date: 'Tue, 10 Nov 2026 20:00:00 GMT', stance: 'refutes',
+      },
+      {
+        title: '<img src=x>', url: 'javascript:void(0)', publisher_name: null,
+        published_date: '2026-02-31', stance: 'unsupported',
+      },
+    ],
+  });
+  assert.deepEqual(sources.map((source) => [source.publisher, source.publishedDate, source.stance]), [
+    ['Reuters', '10/11/2026', 'supports'],
+    ['news.example.com', '11/11/2026', 'refutes'],
+    ['Nguồn bên ngoài', undefined, undefined],
+  ]);
+  assert.equal(sources[2].url, '');
+  assert.equal(sources[2].title, '<img src=x>');
+});
+
+test('bản chia sẻ lấy tối đa hai lý do và hai URL nguồn khác nhau', () => {
+  const result = mapAnalysisResponse({
+    ...backendResponse,
+    verdict: 'likely_false',
+    explanation: 'Nguồn thứ nhất bác bỏ claim. Số liệu không khớp. Lý do thứ ba.',
+    sources: [
+      { title: 'Bài gốc', url: request.payload.page_url },
+      { title: 'Link lỗi', url: 'javascript:void(0)' },
+      { title: 'Một', url: 'https://example.com/a#intro' },
+      { title: 'Bản trùng', url: 'https://example.com/a#result' },
+      { title: 'Hai', url: 'https://example.com/b' },
+      { title: 'Ba', url: 'https://example.com/c' },
+    ],
+  });
+  assert.deepEqual(buildShareSummary(result, request.payload).split('\n'), [
+    'Kết luận: Có vẻ sai sự thật',
+    '',
+    '- Nguồn thứ nhất bác bỏ claim.',
+    '- Số liệu không khớp.',
+    '',
+    'Nguồn tham khảo:',
+    'https://example.com/a',
+    'https://example.com/b',
+    '',
+    'Kết quả do AI tổng hợp, chỉ mang tính tham khảo.',
+  ]);
+  const echoed = buildShareSummary({ ...result, explanation: request.payload.text, sources: [] }, request.payload);
+  assert.ok(!echoed.includes(request.payload.text));
+  assert.ok(!echoed.includes('Nguồn tham khảo'));
+});
+
+test('background chỉ gửi feedback từ side panel cho UUID hiện tại và nhận 204', async () => {
+  await import('../src/entrypoints/background');
+  assert.ok(messageListener);
+  const listener = messageListener;
+  const panel = { url: chrome.runtime.getURL(SIDEPANEL_PATH) };
+  globalThis.fetch = async () => Response.json(backendResponse);
+  await handleAnalysisRequest(request, sender);
+
+  const message: SubmitFeedbackMessage = {
+    type: 'SUBMIT_ANALYSIS_FEEDBACK', tabId: 7, request_id: backendResponse.request_id!, helpful: true,
+  };
+  assert.ok(isSubmitFeedbackMessage(message));
+  assert.equal(isSubmitFeedbackMessage({ ...message, helpful: 'true' }), false);
+  assert.equal(isSubmitFeedbackMessage({ ...message, request_id: 'not-a-uuid' }), false);
+  assert.equal(isSubmitFeedbackMessage({ ...message, tabId: -1 }), false);
+
+  let posts = 0;
+  let replyStatus = 204;
+  const bodies: unknown[] = [];
+  globalThis.fetch = async (url, options) => {
+    posts += 1;
+    assert.equal(url, 'http://127.0.0.1:8000/api/v1/feedback');
+    assert.equal(options?.method, 'POST');
+    assert.equal(new Headers(options?.headers).get('X-API-Key'), 'test-key');
+    bodies.push(JSON.parse(options?.body as string));
+    return new Response(null, { status: replyStatus });
+  };
+  function send(value: SubmitFeedbackMessage): Promise<FeedbackReply> {
+    return new Promise((resolve) => {
+      assert.equal(listener(value, panel, resolve), true);
+    });
+  }
+
+  assert.equal(listener(message, { ...sender, url: request.payload.page_url }, () => {
+    assert.fail('Message from the page should be ignored');
+  }), undefined);
+  assert.equal((await send({ ...message, request_id: '96822b5b-4e4a-4218-9e78-8d793f9770a6' })).ok, false);
+  assert.equal(posts, 0);
+  assert.deepEqual(await send(message), { ok: true });
+  assert.deepEqual(await send(message), { ok: true });
+  assert.equal(posts, 1);
+  assert.equal(getLiveAnalysisState(7)?.feedback, true);
+  assert.deepEqual(await getTabState(7), { status: 'success', request_id: message.request_id });
+
+  replyStatus = 429;
+  const failed = await send({ ...message, helpful: false });
+  assert.deepEqual(failed, { ok: false, error: 'Chưa gửi được phản hồi. Hãy thử lại sau.' });
+  assert.equal(getLiveAnalysisState(7)?.feedback, true);
+  replyStatus = 204;
+  assert.deepEqual(await send({ ...message, helpful: false }), { ok: true });
+  assert.equal(getLiveAnalysisState(7)?.feedback, false);
+  assert.deepEqual(bodies, [true, false, false].map((helpful) => ({ request_id: message.request_id, helpful })));
 });
 
 test('trạng thái và subscription tách biệt theo tab, có thể ngừng theo dõi', async () => {

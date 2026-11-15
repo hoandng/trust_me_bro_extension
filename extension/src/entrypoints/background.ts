@@ -1,7 +1,8 @@
 import {
   forgetAnalysisTab, getLiveAnalysisState, handleAnalysisRequest, retryAnalysisForTab,
 } from '../features/analysis/background/handle-analysis';
-import { isAnalysisTabMessage, isAnalyzeRequest } from '../shared/messages';
+import { handleFeedback } from '../features/analysis/background/handle-feedback';
+import { isAnalysisTabMessage, isAnalyzeRequest, isSubmitFeedbackMessage } from '../shared/messages';
 import { SIDEPANEL_PATH } from '../shared/config';
 
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(console.error);
@@ -16,7 +17,12 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 });
 
 chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
-  if (isAnalysisTabMessage(message) && sender.url === chrome.runtime.getURL(SIDEPANEL_PATH)) {
+  const fromSidePanel = sender.url === chrome.runtime.getURL(SIDEPANEL_PATH);
+  if (fromSidePanel && isSubmitFeedbackMessage(message)) {
+    void handleFeedback(message).then(sendResponse);
+    return true;
+  }
+  if (fromSidePanel && isAnalysisTabMessage(message)) {
     if (message.type === 'GET_ANALYSIS_STATE') {
       sendResponse(getLiveAnalysisState(message.tabId) ?? { status: 'idle' });
       return;

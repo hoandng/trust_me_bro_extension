@@ -1,4 +1,4 @@
-import type { SelectionPayload } from '../features/analysis/types';
+import type { FeedbackSubmission, SelectionPayload } from '../features/analysis/types';
 
 export interface AnalyzeRequestMessage {
   type: 'ANALYZE_REQUEST';
@@ -11,13 +11,34 @@ export interface AnalysisTabMessage {
   tabId: number;
 }
 
-export type ExtensionMessage = AnalyzeRequestMessage | AnalysisTabMessage;
+export interface SubmitFeedbackMessage extends FeedbackSubmission {
+  type: 'SUBMIT_ANALYSIS_FEEDBACK';
+  tabId: number;
+}
+
+export type ExtensionMessage = AnalyzeRequestMessage | AnalysisTabMessage | SubmitFeedbackMessage;
+
+export function isRequestId(value: unknown): value is string {
+  return typeof value === 'string' &&
+    /^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i.test(value);
+}
+
+function isTabId(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+export function isSubmitFeedbackMessage(message: unknown): message is SubmitFeedbackMessage {
+  return !!message && typeof message === 'object' &&
+    'type' in message && message.type === 'SUBMIT_ANALYSIS_FEEDBACK' &&
+    'tabId' in message && isTabId(message.tabId) &&
+    'request_id' in message && isRequestId(message.request_id) &&
+    'helpful' in message && typeof message.helpful === 'boolean';
+}
 
 export function isAnalysisTabMessage(message: unknown): message is AnalysisTabMessage {
   return !!message && typeof message === 'object' &&
     'type' in message && (message.type === 'GET_ANALYSIS_STATE' || message.type === 'RETRY_ANALYSIS') &&
-    'tabId' in message && typeof message.tabId === 'number' &&
-    Number.isSafeInteger(message.tabId) && message.tabId >= 0;
+    'tabId' in message && isTabId(message.tabId);
 }
 
 export function isAnalyzeRequest(message: unknown): message is AnalyzeRequestMessage {

@@ -171,6 +171,7 @@ def test_hit_is_fast_has_new_uuid_skips_providers_and_key_quota(
     first = miss.json()
     second = hit.json()
     assert first.pop("request_id") != second.pop("request_id")
+    assert first["sources"][0]["publisher"] == "Reuters"
     assert first == second
     assert len(limiter.key_records[HEADERS["X-API-Key"]]) == 1
     assert limiter.global_daily_count == 2

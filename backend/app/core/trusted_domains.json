@@ -1,5 +1,11 @@
 {
   "tier1": ["reuters.com", "who.int", "factcheck.org"],
   "tier2": ["britannica.com"],
-  "default": []
+  "default": [],
+  "display_names": {
+    "reuters.com": "Reuters",
+    "who.int": "Tổ chức Y tế Thế giới (WHO)",
+    "factcheck.org": "FactCheck.org",
+    "britannica.com": "Encyclopaedia Britannica"
+  }
 }

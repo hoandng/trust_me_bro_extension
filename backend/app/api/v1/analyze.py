@@ -28,6 +28,7 @@ from app.core.metrics import (
     content_digest,
     current_metrics,
 )
+from app.core.source_ranking import source_display_name
 from app.orchestrator.analysis_orchestrator import AnalysisOrchestrator
 from app.schemas.internal import AnalysisContext
 from app.schemas.request import AnalyzeRequest
@@ -128,6 +129,9 @@ async def analyze_text(
             )
         except sqlite3.Error:
             logger.warning("Unable to write analysis cache")
+    for source in result.sources:
+        if name := source_display_name(source.url):
+            source.publisher = name
     return result
 
 

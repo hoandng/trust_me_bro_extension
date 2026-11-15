@@ -1,3 +1,4 @@
+import { buildShareSummary } from '../share-summary';
 import type { TabAnalysisState, AnalyzeResponse } from '../types';
 
 // DOM Elements
@@ -16,7 +17,7 @@ const serviceWarning = document.getElementById('service-warning') as HTMLDivElem
 
 const resultVerdict = document.getElementById('result-verdict') as HTMLDivElement;
 const verdictIcon = document.getElementById('verdict-icon') as HTMLSpanElement;
-const verdictText = document.getElementById('verdict-text') as HTMLSpanElement;
+const verdictText = document.getElementById('verdict-text') as HTMLHeadingElement;
 
 const resultConfidenceText = document.getElementById('result-confidence-text') as HTMLSpanElement;
 const resultConfidenceBar = document.getElementById('result-confidence-bar') as HTMLDivElement;
@@ -28,8 +29,14 @@ const resultSources = document.getElementById('result-sources') as HTMLUListElem
 const errorMessage = document.getElementById('error-message') as HTMLParagraphElement;
 const btnRetry = document.getElementById('btn-retry') as HTMLButtonElement;
 const btnCopy = document.getElementById('btn-copy') as HTMLButtonElement;
+const copyStatus = document.getElementById('copy-status') as HTMLParagraphElement;
+const feedbackActions = document.getElementById('feedback-actions') as HTMLDivElement;
+const btnHelpful = document.getElementById('btn-helpful') as HTMLButtonElement;
+const btnNotHelpful = document.getElementById('btn-not-helpful') as HTMLButtonElement;
+const feedbackStatus = document.getElementById('feedback-status') as HTMLParagraphElement;
 
 let loadingInterval: number | null = null;
+let displayedState: TabAnalysisState = { status: 'idle' };
 
 function hideAllStates() {
   stateIdle.classList.add('hidden');
@@ -65,6 +72,8 @@ function stopLoadingAnimation() {
 }
 
 export function renderAnalysisState(state: TabAnalysisState) {
+  displayedState = state;
+  copyStatus.textContent = '';
   hideAllStates();
 
   switch (state.status) {
@@ -74,18 +83,14 @@ export function renderAnalysisState(state: TabAnalysisState) {
 
     case 'loading':
       stateLoading.classList.remove('hidden');
-      if (state.request?.text) {
-        loadingTextPreview.textContent = state.request.text;
-      }
+      loadingTextPreview.textContent = state.request?.text ?? '';
       startLoadingAnimation();
       break;
 
     case 'success':
       stateSuccess.classList.remove('hidden');
       if (state.response) {
-        if (state.request?.text) {
-          setupTextPreview(state.request.text);
-        }
+        setupTextPreview(state.request?.text ?? '');
         renderSuccess(state.response);
       }
       break;
@@ -95,6 +100,19 @@ export function renderAnalysisState(state: TabAnalysisState) {
       errorMessage.textContent = state.error || 'Lỗi không xác định.';
       break;
   }
+}
+
+export function renderFeedbackState(
+  available: boolean, selected: boolean | undefined, sending: boolean, error?: string,
+) {
+  feedbackActions.classList.toggle('hidden', !available);
+  btnHelpful.disabled = !available || sending || selected === true;
+  btnNotHelpful.disabled = !available || sending || selected === false;
+  btnHelpful.setAttribute('aria-pressed', String(selected === true));
+  btnNotHelpful.setAttribute('aria-pressed', String(selected === false));
+  feedbackStatus.textContent = error ?? (sending
+    ? 'Đang gửi phản hồi…'
+    : selected !== undefined ? 'Đã gửi phản hồi. Cảm ơn bạn!' : '');
 }
 
 function setupTextPreview(text: string) {
@@ -114,15 +132,21 @@ function setupTextPreview(text: string) {
 function getVerdictInfo(verdict: string) {
   switch (verdict) {
     case 'Thật':
-      return { class: 'verdict-True', icon: '✅', text: 'Đáng tin cậy' };
+      return { class: 'verdict-True', icon: '✅' };
     case 'Giả':
-      return { class: 'verdict-False', icon: '❌', text: 'Sai sự thật' };
+      return { class: 'verdict-False', icon: '❌' };
     case 'Thiếu ngữ cảnh':
-      return { class: 'verdict-Mixed', icon: '⚠️', text: 'Thiếu ngữ cảnh' };
+      return { class: 'verdict-Mixed', icon: '⚠️' };
     default:
-      return { class: 'verdict-Unverified', icon: '❓', text: 'Chưa thể xác minh' };
+      return { class: 'verdict-Unverified', icon: '❓' };
   }
 }
+
+const stanceLabels = {
+  supports: { className: 'stance-support', label: 'Đồng tình' },
+  refutes: { className: 'stance-refute', label: 'Phản bác' },
+  neutral: { className: 'stance-neutral', label: 'Trung lập' },
+};
 
 function renderSuccess(response: AnalyzeResponse) {
   const usage = response.model_usage;
@@ -145,7 +169,7 @@ function renderSuccess(response: AnalyzeResponse) {
   const vInfo = getVerdictInfo(response.verdict);
   resultVerdict.className = `verdict-badge ${vInfo.class}`;
   verdictIcon.textContent = vInfo.icon;
-  verdictText.textContent = vInfo.text;
+  verdictText.textContent = response.conclusion;
 
   // Confidence
   resultConfidenceText.textContent = `${response.confidence}%`;
@@ -165,28 +189,25 @@ function renderSuccess(response: AnalyzeResponse) {
       const header = document.createElement('div');
       header.className = 'source-header';
 
+      const sourceDetails = document.createElement('div');
       const publisher = document.createElement('span');
       publisher.className = 'source-publisher';
       publisher.textContent = source.publisher || 'Nguồn bên ngoài';
 
-      header.appendChild(publisher);
+      sourceDetails.appendChild(publisher);
+      if (source.publishedDate) {
+        const date = document.createElement('span');
+        date.className = 'source-date';
+        date.textContent = `Đăng ngày ${source.publishedDate}`;
+        sourceDetails.appendChild(date);
+      }
+      header.appendChild(sourceDetails);
 
       if (source.stance) {
         const stanceBadge = document.createElement('span');
-        const sType = source.stance.toLowerCase();
-
-        let stanceClass = 'stance-neutral';
-        let stanceText = 'Trung lập';
-        if (sType.includes('support')) {
-          stanceClass = 'stance-support';
-          stanceText = 'Ủng hộ';
-        } else if (sType.includes('refute')) {
-          stanceClass = 'stance-refute';
-          stanceText = 'Bác bỏ';
-        }
-
-        stanceBadge.className = `stance-badge ${stanceClass}`;
-        stanceBadge.textContent = stanceText;
+        const stance = stanceLabels[source.stance];
+        stanceBadge.className = `stance-badge ${stance.className}`;
+        stanceBadge.textContent = stance.label;
         header.appendChild(stanceBadge);
       }
 
@@ -194,12 +215,16 @@ function renderSuccess(response: AnalyzeResponse) {
 
       const titleEl = document.createElement('h4');
       titleEl.className = 'source-title';
-      const a = document.createElement('a');
-      a.href = source.url;
-      a.target = '_blank';
-      a.rel = 'noopener noreferrer';
-      a.textContent = source.title || source.url;
-      titleEl.appendChild(a);
+      if (source.url) {
+        const a = document.createElement('a');
+        a.href = source.url;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.textContent = source.title || source.url;
+        titleEl.appendChild(a);
+      } else {
+        titleEl.textContent = source.title || 'Nguồn tham khảo';
+      }
       li.appendChild(titleEl);
 
       if (source.snippet) {
@@ -219,38 +244,17 @@ function renderSuccess(response: AnalyzeResponse) {
 }
 
 async function handleCopyResult() {
+  const state = displayedState;
+  if (state.status !== 'success' || !state.response) return;
   try {
-    const verdict = verdictText.textContent || '';
-    const confidence = resultConfidenceText.textContent || '';
-    const explanation = resultExplanation.textContent || '';
-
-    let text = `[TrustMeBro] Kết quả kiểm chứng:\n- Kết luận: ${verdict} (${confidence})\n- Giải thích: ${explanation}\n\nNguồn tham khảo:\n`;
-
-    const sourceItems = resultSources.querySelectorAll('.source-item');
-    if (sourceItems.length > 0) {
-      sourceItems.forEach((item, index) => {
-        const a = item.querySelector('a');
-        text += `${index + 1}. ${a?.textContent} - ${a?.href}\n`;
-      });
-    } else {
-      text += 'Không có nguồn tham khảo.\n';
-    }
-
-    text += '\n*Lưu ý: Kết quả do AI tổng hợp, chỉ mang tính tham khảo.*';
-
-    await navigator.clipboard.writeText(text);
-
-    const originalText = btnCopy.textContent;
-    btnCopy.textContent = '✅ Đã sao chép';
-    setTimeout(() => {
-      btnCopy.textContent = originalText;
-    }, 2000);
-  } catch (err) {
-    console.error('Failed to copy: ', err);
+    await navigator.clipboard.writeText(buildShareSummary(state.response, state.request));
+    if (displayedState === state) copyStatus.textContent = 'Đã sao chép bản tóm tắt.';
+  } catch {
+    if (displayedState === state) copyStatus.textContent = 'Chưa sao chép được. Hãy thử lại.';
   }
 }
 
-export function bindAnalysisView(onRetry: () => void) {
+export function bindAnalysisView(onRetry: () => void, onFeedback: (helpful: boolean) => void) {
   btnReadMore.addEventListener('click', () => {
     const isExpanded = successTextPreview.classList.toggle('expanded');
     btnReadMore.textContent = isExpanded ? 'Thu gọn' : 'Xem thêm';
@@ -258,5 +262,7 @@ export function bindAnalysisView(onRetry: () => void) {
   });
   btnCopy.addEventListener('click', handleCopyResult);
   btnRetry.addEventListener('click', onRetry);
+  btnHelpful.addEventListener('click', () => onFeedback(true));
+  btnNotHelpful.addEventListener('click', () => onFeedback(false));
   window.addEventListener('pagehide', stopLoadingAnimation);
 }

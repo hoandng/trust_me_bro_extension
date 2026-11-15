@@ -46,6 +46,7 @@ Mục tiêu: extension dùng được mượt mà, xử lý lỗi tốt, sẵn s
 - [x] A3. Dùng chung kết nối theo lifespan, giới hạn theo IP đã xác minh qua proxy, áp ngân sách phân tích mặc định 25 giây và ghi thời gian từng bước.
 - [x] B1. Ghi số liệu và phản hồi vào SQLite theo UUID, có API tổng hợp dành cho admin và kiểm thử nội dung gốc không đi vào kho lưu trữ.
 - [x] B2. Khung benchmark bốn chế độ với dataset mẫu, báo cáo chất lượng và chi phí, cache và phiếu chấm nguồn. Có test chạy toàn bộ mẫu bằng mock.
+- [x] C2. Side panel hiển thị kết luận dễ hiểu, tên nguồn và ngày xuất bản, gửi feedback qua background và sao chép bản tóm tắt ngắn.
 
 ## Milestone 3: Nâng cấp tính năng (theo yêu cầu ban đầu)
 
