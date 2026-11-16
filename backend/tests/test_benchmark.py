@@ -176,9 +176,25 @@ def test_sample_end_to_end_resume_and_manual_citations(
     assert tavily.call_count == 10
     assert sdk.return_value.aio.interactions.create.await_count == 48
     sdk.return_value.aio.aclose.assert_awaited_once()
-    (report,) = output.glob("benchmark_*.md")
-    result_path = report.with_suffix(".csv")
-    grade_path = output / f"{report.stem}_citations.csv"
+    run_dirs = sorted(output.glob("dataset_*"))
+    assert len(run_dirs) == 1
+    run_dir = run_dirs[0]
+    quality_report = run_dir / "01_chat_luong_va_do_tin_cay.md"
+    perf_report = run_dir / "02_hieu_nang_va_trai_nghiem.md"
+    cost_report = run_dir / "03_chi_phi_va_tai_nguyen.md"
+    summary_report = run_dir / "04_so_sanh_va_danh_gia_tong_hop.md"
+    result_path = run_dir / "results.csv"
+    grade_path = run_dir / "citations.csv"
+    for path in (
+        quality_report,
+        perf_report,
+        cost_report,
+        summary_report,
+        result_path,
+        grade_path,
+    ):
+        assert path.is_file()
+
     rows = read_csv(result_path)
     assert len(rows) == 40
     assert all(row["prediction"] == row["label"] and not row["error"] for row in rows)
@@ -187,7 +203,16 @@ def test_sample_end_to_end_resume_and_manual_citations(
     full = next(row for row in rows if row["mode"] == "full")
     assert float(llm_only["estimated_cost_usd"]) == pytest.approx(0.00002)
     assert float(full["estimated_cost_usd"]) == pytest.approx(0.01004)
-    assert report.read_text(encoding="utf-8").count("Ma trận nhầm lẫn") == 4
+    assert int(llm_only["input_tokens"]) == 10
+    assert int(llm_only["output_tokens"]) == 5
+    assert int(llm_only["total_tokens"]) == 15
+    assert int(full["input_tokens"]) == 20
+    assert int(full["output_tokens"]) == 10
+    assert int(full["total_tokens"]) == 30
+    assert quality_report.read_text(encoding="utf-8").count("Ma trận nhầm lẫn ·") == 4
+    assert "Stage 0 Extract" in perf_report.read_text(encoding="utf-8")
+    assert "Ước tính 1K lượt" in cost_report.read_text(encoding="utf-8")
+    assert "Kết luận tổng quan" in summary_report.read_text(encoding="utf-8")
     citations = read_csv(grade_path)
     assert len(citations) == 56
     assert all(not row["supports_verdict"] for row in citations)
@@ -199,7 +224,15 @@ def test_sample_end_to_end_resume_and_manual_citations(
         row["mode"] == "llm_factcheck" and "reuters.com" in row["citation_url"]
         for row in citations
     )
-    for path in (cache, report, result_path, grade_path):
+    for path in (
+        cache,
+        quality_report,
+        perf_report,
+        cost_report,
+        summary_report,
+        result_path,
+        grade_path,
+    ):
         contents = path.read_bytes()
         assert all(text.encode() not in contents for text in samples)
         assert b"example.invalid/benchmark/" not in contents
@@ -216,18 +249,23 @@ def test_sample_end_to_end_resume_and_manual_citations(
     write_csv(grade_path, citations)
     sdk.reset_mock()
     with respx.mock(assert_all_mocked=True) as router:
-        assert benchmark.main([*args, "--cache-only"]) == 0
+        assert (
+            benchmark.main([*args, "--cache-only", "--judgments", str(grade_path)]) == 0
+        )
         # Chạy thường cũng phải dùng cache khi mọi cặp đã có.
-        assert benchmark.main(args) == 0
+        assert benchmark.main([*args, "--judgments", str(grade_path)]) == 0
         assert router.calls.call_count == 0
     sdk.assert_not_called()
-    assert all(row["cached"] == "True" for row in read_csv(result_path))
+    latest_dir = max(output.glob("dataset_*"))
+    assert all(row["cached"] == "True" for row in read_csv(latest_dir / "results.csv"))
     assert sorted(
         row["supports_verdict"]
-        for row in read_csv(grade_path)
+        for row in read_csv(latest_dir / "citations.csv")
         if row["supports_verdict"]
     ) == ["false", "true"]
-    assert "50.0% | 2/10" in report.read_text(encoding="utf-8")
+    assert "50.0% | 2/10" in (latest_dir / "01_chat_luong_va_do_tin_cay.md").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_limit_and_http_quota_retry(benchmark, benchmark_api, tmp_path):
@@ -287,9 +325,7 @@ def test_limit_and_http_quota_retry(benchmark, benchmark_api, tmp_path):
         assert factcheck.call_count == 7
         assert tavily.call_count == 2
         assert sdk.return_value.aio.interactions.create.await_count == 10
-    (result_path,) = (
-        path for path in tmp_path.glob("*.csv") if "_citations" not in path.name
-    )
+    result_path = max(tmp_path.glob("dataset_*/results.csv"))
     rows = read_csv(result_path)
     assert len(rows) == 4
     assert {row["id"] for row in rows} == {"sample-01"}
@@ -343,9 +379,7 @@ def test_empty_cache_only_and_missing_keys_do_not_start_requests(
         assert benchmark.main([*args, "--cache-only"]) == 1
         assert router.calls.call_count == 0
     sdk.assert_not_called()
-    (result_path,) = (
-        path for path in tmp_path.glob("*.csv") if "_citations" not in path.name
-    )
+    result_path = max(tmp_path.glob("dataset_*/results.csv"))
     assert {row["error"] for row in read_csv(result_path)} == {"cache_miss"}
 
 
@@ -366,6 +400,9 @@ def test_metrics_with_incorrect_predictions(benchmark):
                 prediction=predicted,
                 latency_ms=index * 10,
                 estimated_cost_usd=index if index < 3 else None,
+                input_tokens=index * 100,
+                output_tokens=index * 20,
+                total_tokens=index * 120,
             ),
             False,
         )
@@ -379,3 +416,7 @@ def test_metrics_with_incorrect_predictions(benchmark):
     assert stats["p50_ms"] == 20
     assert stats["p95_ms"] == 40
     assert stats["cost_per_check"] == 1.5
+    assert stats["avg_input_tokens"] == 250
+    assert stats["avg_output_tokens"] == 50
+    assert stats["avg_total_tokens"] == 300
+    assert stats["total_all_tokens"] == 1200

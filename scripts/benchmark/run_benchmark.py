@@ -24,8 +24,9 @@ from typing import Literal
 from urllib.parse import urlsplit
 
 import httpx
+from pydantic import BaseModel, Field
 from app.core.config import settings
-from app.core.metrics import AnalysisMetrics, current_metrics
+from app.core.metrics import AnalysisMetrics, GeminiUsage, current_metrics
 from app.orchestrator.analysis_orchestrator import AnalysisOrchestrator
 from app.schemas.internal import AnalysisContext, ServiceResult
 from app.schemas.response import ModelUsage
@@ -33,12 +34,12 @@ from app.services.factcheck_service import FactCheckService
 from app.services.gemini_model_pool import GeminiQuotaExhausted
 from app.services.gemini_service import VIETNAM_TIMEZONE, GeminiService
 from app.services.tavily_service import TavilySearchService
-from pydantic import BaseModel
 
 BENCHMARK_DIR = Path(__file__).resolve().parent
 BACKEND_DIR = BENCHMARK_DIR.parents[1] / "backend"
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
+
 
 Label = Literal["true", "false", "mixed", "unverified"]
 LABELS = ("true", "false", "mixed", "unverified")
@@ -51,8 +52,20 @@ REQUIRED_KEYS = {
     "llm_factcheck": ("gemini_api_key", "factcheck_api_key"),
     "full": ("gemini_api_key", "factcheck_api_key", "tavily_api_key"),
 }
-CACHE_VERSION = 1
+CACHE_VERSION = 2
 MAX_QUOTA_WAIT_SECONDS = 60
+
+# Ngưỡng tham chiếu để đánh giá mức độ chạy tốt & đáng sử dụng của sản phẩm.
+TARGET_ACCURACY = 0.80
+TARGET_MACRO_F1 = 0.75
+TARGET_UNVERIFIED_MIN = 0.15
+TARGET_UNVERIFIED_MAX = 0.25
+TARGET_CITATION_VALIDITY = 0.85
+TARGET_P50_MS = 5000.0
+TARGET_P95_MS = 10000.0
+TARGET_DEGRADED_RATE = 0.05
+TARGET_ERROR_RATE = 0.01
+TARGET_COST_USD = 0.01
 LLM_ONLY_PROMPT = (
     "Classify the factual claim using your existing knowledge. Return true if it is "
     "supported, false if it is contradicted, mixed if it combines accurate and inaccurate "
@@ -135,14 +148,33 @@ class Evaluation(BaseModel):
     estimated_cost_usd: float | None = None
     degraded: bool = False
     error: Literal["quota", "provider_error", "cache_miss"] | None = None
+    confidence_score: float | None = None
+    explanation_words: int | None = None
+    extract_ms: int | None = None
+    evidence_ms: int | None = None
+    assess_ms: int | None = None
+    timed_out: bool = False
+    service_status: dict[str, str] = Field(default_factory=dict)
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    thought_tokens: int | None = None
+    cached_tokens: int | None = None
+    total_tokens: int | None = None
+    gemini_calls: int = 0
+    factcheck_calls: int = 0
+    tavily_credits: int | None = None
+    quota_retries: int = 0
+    model_fallbacks: int = 0
+    models_used: tuple[str, ...] = ()
 
 
 class LLMBaseline(GeminiService):
-    async def classify(self, text: str) -> Label:
+    async def classify(self, text: str) -> tuple[Label, ModelUsage]:
+        model_usage = ModelUsage(requested_model=settings.gemini_model)
         async with asyncio.timeout(settings.analysis_timeout_seconds):
             response = await self._create(
                 "assessment",
-                ModelUsage(requested_model=settings.gemini_model),
+                model_usage,
                 system_instruction=LLM_ONLY_PROMPT,
                 input=f"<post>\n{text}\n</post>",
                 response_format=[
@@ -153,7 +185,10 @@ class LLMBaseline(GeminiService):
                     }
                 ],
             )
-        return LLMVerdict.model_validate_json(response.output_text).verdict
+        return (
+            LLMVerdict.model_validate_json(response.output_text).verdict,
+            model_usage,
+        )
 
 
 class NoTavily:
@@ -171,6 +206,19 @@ def citation_urls(urls: Iterable[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(url for url in urls if is_web_url(url)))
 
 
+def sum_optional(values: Iterable[int | None]) -> int | None:
+    present = [value for value in values if value is not None]
+    return sum(present) if present else None
+
+
+def usage_total_tokens(usage: GeminiUsage) -> int | None:
+    if usage.total_tokens is not None:
+        return usage.total_tokens
+    if usage.input_tokens is not None and usage.output_tokens is not None:
+        return usage.input_tokens + usage.output_tokens + (usage.thought_tokens or 0)
+    return None
+
+
 class BenchmarkModes:
     def __init__(
         self,
@@ -185,11 +233,23 @@ class BenchmarkModes:
 
     async def predict(self, mode: str, text: str) -> Evaluation:
         if mode == "llm_only":
-            return Evaluation(prediction=await self.gemini.classify(text))
+            verdict, model_usage = await self.gemini.classify(text)
+            models = tuple(
+                dict.fromkeys(m for m in (model_usage.assessment_model,) if m)
+            )
+            return Evaluation(
+                prediction=verdict,
+                service_status={"gemini": "ok"},
+                model_fallbacks=len(model_usage.fallbacks),
+                models_used=models,
+            )
         if mode == "factcheck_only":
             result = await self.factcheck.check(AnalysisContext(text=text, claim=text))
             if result.status == "error":
-                return Evaluation(error="provider_error")
+                return Evaluation(
+                    error="provider_error",
+                    service_status={"factcheck": result.status},
+                )
             claim = normalize_claim(text)
             relevant = [
                 source
@@ -211,6 +271,7 @@ class BenchmarkModes:
             return Evaluation(
                 prediction=verdict,
                 citation_urls=citation_urls(source.url for source in relevant),
+                service_status={"factcheck": result.status},
             )
 
         orchestrator = self.full if mode == "full" else self.llm_factcheck
@@ -221,10 +282,32 @@ class BenchmarkModes:
             "mixed": "mixed",
             "unverified": "unverified",
         }
+        statuses = result.service_status.model_dump()
+        fallbacks = 0
+        models: tuple[str, ...] = ()
+        if result.model_usage is not None:
+            fallbacks = len(result.model_usage.fallbacks)
+            models = tuple(
+                dict.fromkeys(
+                    m
+                    for m in (
+                        result.model_usage.extraction_model,
+                        result.model_usage.assessment_model,
+                    )
+                    if m
+                )
+            )
         return Evaluation(
             prediction=labels[result.verdict],
             citation_urls=citation_urls(source.url for source in result.sources),
-            degraded="error" in result.service_status.model_dump().values(),
+            degraded="error" in statuses.values(),
+            confidence_score=result.confidence_score,
+            explanation_words=len(result.explanation.split())
+            if result.explanation
+            else 0,
+            service_status=statuses,
+            model_fallbacks=fallbacks,
+            models_used=models,
         )
 
 
@@ -258,6 +341,7 @@ async def evaluate(
     metrics = AnalysisMetrics(requested_model=settings.gemini_model)
     metric_token = current_metrics.set(metrics)
     elapsed = 0.0
+    quota_retries = 0
     try:
         for attempt in range(retries + 1):
             delays: list[float | None] = []
@@ -279,11 +363,38 @@ async def evaluate(
             delay = max(value if value is not None else 2**attempt for value in delays)
             if attempt == retries or delay > MAX_QUOTA_WAIT_SECONDS:
                 break
+            quota_retries += 1
             await asyncio.sleep(delay)
     finally:
         current_metrics.reset(metric_token)
     result.latency_ms = round(elapsed * 1000, 3)
     result.estimated_cost_usd = metrics.estimated_cost()
+    result.extract_ms = metrics.extract_ms
+    result.evidence_ms = metrics.evidence_ms
+    result.assess_ms = metrics.assess_ms
+    result.timed_out = metrics.timed_out
+    result.factcheck_calls = metrics.factcheck_calls
+    result.tavily_credits = sum_optional(metrics.tavily_credits)
+    result.quota_retries = quota_retries
+    if metrics.gemini_usage:
+        result.gemini_calls = len(metrics.gemini_usage)
+        result.input_tokens = sum_optional(u.input_tokens for u in metrics.gemini_usage)
+        result.output_tokens = sum_optional(
+            u.output_tokens for u in metrics.gemini_usage
+        )
+        result.thought_tokens = sum_optional(
+            u.thought_tokens for u in metrics.gemini_usage
+        )
+        result.cached_tokens = sum_optional(
+            u.cached_tokens for u in metrics.gemini_usage
+        )
+        result.total_tokens = sum_optional(
+            usage_total_tokens(u) for u in metrics.gemini_usage
+        )
+        if not result.models_used:
+            result.models_used = tuple(
+                dict.fromkeys(u.model for u in metrics.gemini_usage if u.model)
+            )
     return result
 
 
@@ -324,7 +435,21 @@ def percentile(values: list[float], percent: int) -> float | None:
     return sorted(values)[(percent * len(values) + 99) // 100 - 1] if values else None
 
 
+def _latency_stats(
+    values: list[int | float],
+) -> tuple[float | None, float | None, float | None]:
+    if not values:
+        return None, None, None
+    return mean(values), percentile(values, 50), percentile(values, 95)
+
+
+def _optional_mean(values: Iterable[int | float | None]) -> float | None:
+    present = [value for value in values if value is not None]
+    return mean(present) if present else None
+
+
 def summarize(rows: list[ResultRow]) -> dict:
+    total = len(rows)
     completed = [row for row in rows if row.evaluation.prediction is not None]
     matrix = Counter((row.sample.label, row.evaluation.prediction) for row in completed)
     f1 = []
@@ -340,9 +465,68 @@ def summarize(rows: list[ResultRow]) -> dict:
         for row in rows
         if row.evaluation.estimated_cost_usd is not None
     ]
+    degraded_count = sum(row.evaluation.degraded for row in completed)
+    errors = total - len(completed)
+    timeouts = sum(row.evaluation.timed_out for row in rows)
+
+    extract_vals = [
+        r.evaluation.extract_ms
+        for r in completed
+        if r.evaluation.extract_ms is not None
+    ]
+    evidence_vals = [
+        r.evaluation.evidence_ms
+        for r in completed
+        if r.evaluation.evidence_ms is not None
+    ]
+    assess_vals = [
+        r.evaluation.assess_ms for r in completed if r.evaluation.assess_ms is not None
+    ]
+
+    extract_avg, extract_p50, extract_p95 = _latency_stats(extract_vals)
+    evidence_avg, evidence_p50, evidence_p95 = _latency_stats(evidence_vals)
+    assess_avg, assess_p50, assess_p95 = _latency_stats(assess_vals)
+
+    total_tokens_list = [
+        r.evaluation.total_tokens for r in rows if r.evaluation.total_tokens is not None
+    ]
+    input_tokens_list = [
+        r.evaluation.input_tokens for r in rows if r.evaluation.input_tokens is not None
+    ]
+    output_tokens_list = [
+        r.evaluation.output_tokens
+        for r in rows
+        if r.evaluation.output_tokens is not None
+    ]
+    thought_tokens_list = [
+        r.evaluation.thought_tokens
+        for r in rows
+        if r.evaluation.thought_tokens is not None
+    ]
+    cached_tokens_list = [
+        r.evaluation.cached_tokens
+        for r in rows
+        if r.evaluation.cached_tokens is not None
+    ]
+
+    service_counts = {
+        service: Counter(
+            r.evaluation.service_status[service]
+            for r in rows
+            if service in r.evaluation.service_status
+        )
+        for service in ("factcheck", "tavily", "gemini")
+    }
+
     return {
+        "total": total,
         "completed": len(completed),
-        "degraded": sum(row.evaluation.degraded for row in completed),
+        "errors": errors,
+        "error_rate": errors / total if total else None,
+        "degraded": degraded_count,
+        "degraded_rate": degraded_count / len(completed) if completed else None,
+        "timeouts": timeouts,
+        "timeout_rate": timeouts / total if total else None,
         "accuracy": sum(matrix[label, label] for label in LABELS) / len(completed)
         if completed
         else None,
@@ -351,10 +535,55 @@ def summarize(rows: list[ResultRow]) -> dict:
         / len(completed)
         if completed
         else None,
+        "avg_confidence": _optional_mean(
+            r.evaluation.confidence_score for r in completed
+        ),
+        "avg_explanation_words": _optional_mean(
+            r.evaluation.explanation_words for r in completed
+        ),
+        "avg_ms": mean(latencies) if latencies else None,
         "p50_ms": percentile(latencies, 50),
         "p95_ms": percentile(latencies, 95),
+        "p99_ms": percentile(latencies, 99),
+        "max_ms": max(latencies) if latencies else None,
+        "extract_avg_ms": extract_avg,
+        "extract_p50_ms": extract_p50,
+        "extract_p95_ms": extract_p95,
+        "evidence_avg_ms": evidence_avg,
+        "evidence_p50_ms": evidence_p50,
+        "evidence_p95_ms": evidence_p95,
+        "assess_avg_ms": assess_avg,
+        "assess_p50_ms": assess_p50,
+        "assess_p95_ms": assess_p95,
         "cost_per_check": mean(costs) if costs else None,
+        "total_cost_usd": sum(costs) if costs else None,
         "cost_count": len(costs),
+        "avg_input_tokens": mean(input_tokens_list) if input_tokens_list else None,
+        "avg_output_tokens": mean(output_tokens_list) if output_tokens_list else None,
+        "avg_thought_tokens": mean(thought_tokens_list)
+        if thought_tokens_list
+        else None,
+        "avg_cached_tokens": mean(cached_tokens_list) if cached_tokens_list else None,
+        "avg_total_tokens": mean(total_tokens_list) if total_tokens_list else None,
+        "min_total_tokens": min(total_tokens_list) if total_tokens_list else None,
+        "max_total_tokens": max(total_tokens_list) if total_tokens_list else None,
+        "p95_total_tokens": percentile(total_tokens_list, 95),
+        "total_input_tokens": sum(input_tokens_list) if input_tokens_list else None,
+        "total_output_tokens": sum(output_tokens_list) if output_tokens_list else None,
+        "total_all_tokens": sum(total_tokens_list) if total_tokens_list else None,
+        "avg_gemini_calls": mean([r.evaluation.gemini_calls for r in rows])
+        if rows
+        else None,
+        "avg_factcheck_calls": mean([r.evaluation.factcheck_calls for r in rows])
+        if rows
+        else None,
+        "avg_tavily_credits": _optional_mean(r.evaluation.tavily_credits for r in rows),
+        "quota_retries": sum(r.evaluation.quota_retries for r in rows),
+        "model_fallbacks": sum(r.evaluation.model_fallbacks for r in rows),
+        "models_counter": Counter(
+            model for r in rows for model in r.evaluation.models_used
+        ),
+        "service_counts": service_counts,
         "matrix": matrix,
     }
 
@@ -395,12 +624,521 @@ def format_number(value: float | None, spec: str) -> str:
     return "—" if value is None else format(value, spec)
 
 
+def _eval_badge(passed: bool | None) -> str:
+    if passed is None:
+        return "— Chưa có số liệu"
+    return "Đạt" if passed else "Chưa đạt"
+
+
+def _unverified_badge(rate: float | None) -> str:
+    if rate is None:
+        return "— Chưa có số liệu"
+    if TARGET_UNVERIFIED_MIN <= rate <= TARGET_UNVERIFIED_MAX:
+        return "Đạt (cân bằng)"
+    if rate > TARGET_UNVERIFIED_MAX:
+        return "Chưa đạt (quá cao)"
+    return "Cảnh báo (quá thấp)"
+
+
+def _build_quality_report(
+    rows_by_mode: dict[str, list[ResultRow]],
+    stats_by_mode: dict[str, dict],
+    validity_by_mode: dict[str, tuple[float | None, int, int]],
+    header_meta: str,
+) -> str:
+    lines = [
+        "# Nhóm 1: Chất lượng Phân tích & Độ tin cậy",
+        "",
+        header_meta,
+        "",
+        (
+            f"Ngưỡng tham chiếu: Accuracy ≥ {TARGET_ACCURACY:.0%}, Macro-F1 ≥ {TARGET_MACRO_F1:.2f}, "
+            f"Unverified trong khoảng {TARGET_UNVERIFIED_MIN:.0%}–{TARGET_UNVERIFIED_MAX:.0%}, "
+            f"Citation validity ≥ {TARGET_CITATION_VALIDITY:.0%}."
+        ),
+        "",
+        "## Tổng quan chất lượng theo chế độ",
+        "",
+        (
+            "| Chế độ | Hoàn tất | Accuracy | Đánh giá Acc | Macro-F1 | Đánh giá F1 | "
+            "Unverified | Đánh giá Unv | Citation validity | Nguồn đã chấm | Confidence TB | Giải thích TB (từ) |"
+        ),
+        "|---|---:|---:|---|---:|---|---:|---|---:|---:|---:|---:|",
+    ]
+    matrices = []
+    topic_sections = []
+    for mode in MODES:
+        subset = rows_by_mode[mode]
+        stats = stats_by_mode[mode]
+        validity, graded_count, total_citations = validity_by_mode[mode]
+        acc_ok = (
+            stats["accuracy"] >= TARGET_ACCURACY
+            if stats["accuracy"] is not None
+            else None
+        )
+        f1_ok = (
+            stats["macro_f1"] >= TARGET_MACRO_F1
+            if stats["macro_f1"] is not None
+            else None
+        )
+        lines.append(
+            f"| `{mode}` | {stats['completed']}/{len(subset)} | "
+            f"{format_number(stats['accuracy'], '.1%')} | {_eval_badge(acc_ok)} | "
+            f"{format_number(stats['macro_f1'], '.3f')} | {_eval_badge(f1_ok)} | "
+            f"{format_number(stats['unverified_rate'], '.1%')} | {_unverified_badge(stats['unverified_rate'])} | "
+            f"{format_number(validity, '.1%')} | {graded_count}/{total_citations} | "
+            f"{format_number(stats['avg_confidence'], '.2f')} | "
+            f"{format_number(stats['avg_explanation_words'], '.1f')} |"
+        )
+        matrices.extend(
+            [
+                "",
+                f"### Ma trận nhầm lẫn · `{mode}`",
+                "",
+                "| Nhãn thật / dự đoán | " + " | ".join(LABELS) + " |",
+                "|---|---:|---:|---:|---:|",
+                *(
+                    f"| {actual} | "
+                    + " | ".join(
+                        str(stats["matrix"][actual, predicted]) for predicted in LABELS
+                    )
+                    + " |"
+                    for actual in LABELS
+                ),
+            ]
+        )
+        present_topics = sorted({row.sample.topic for row in subset})
+        if present_topics:
+            topic_sections.extend(
+                [
+                    "",
+                    f"### Phân tích theo chủ đề · `{mode}`",
+                    "",
+                    "| Chủ đề | Số mẫu | Hoàn tất | Accuracy | Macro-F1 | Unverified |",
+                    "|---|---:|---:|---:|---:|---:|",
+                ]
+            )
+            for topic in present_topics:
+                topic_rows = [row for row in subset if row.sample.topic == topic]
+                topic_stats = summarize(topic_rows)
+                topic_sections.append(
+                    f"| `{topic}` | {len(topic_rows)} | {topic_stats['completed']} | "
+                    f"{format_number(topic_stats['accuracy'], '.1%')} | "
+                    f"{format_number(topic_stats['macro_f1'], '.3f')} | "
+                    f"{format_number(topic_stats['unverified_rate'], '.1%')} |"
+                )
+
+    lines.extend(
+        [
+            "",
+            "## Ma trận nhầm lẫn",
+            *matrices,
+            "",
+            "## Chất lượng theo chủ đề",
+            *topic_sections,
+        ]
+    )
+    lines.extend(
+        [
+            "",
+            (
+                "Điền `true` hoặc `false` ở cột `supports_verdict` trong [citations.csv](citations.csv) "
+                "và chạy lại với `--cache-only --judgments <đường_dẫn/citations.csv>` để cập nhật Citation validity."
+            ),
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _build_performance_report(
+    stats_by_mode: dict[str, dict],
+    header_meta: str,
+) -> str:
+    lines = [
+        "# Nhóm 2: Hiệu năng & Trải nghiệm Người dùng",
+        "",
+        header_meta,
+        "",
+        (
+            f"Ngưỡng tham chiếu: Latency p50 ≤ {TARGET_P50_MS:,.0f} ms (5s), "
+            f"p95 ≤ {TARGET_P95_MS:,.0f} ms (10s), "
+            f"Degraded < {TARGET_DEGRADED_RATE:.0%}, Error < {TARGET_ERROR_RATE:.0%}."
+        ),
+        "",
+        "## Độ trễ & Độ ổn định theo chế độ",
+        "",
+        (
+            "| Chế độ | Avg (ms) | p50 (ms) | Đánh giá p50 | p95 (ms) | Đánh giá p95 | "
+            "p99 (ms) | Max (ms) | Degraded | Tỷ lệ Degraded | Lỗi | Tỷ lệ Lỗi | Timeout |"
+        ),
+        "|---|---:|---:|---|---:|---|---:|---:|---:|---:|---:|---:|---:|",
+    ]
+    for mode in MODES:
+        stats = stats_by_mode[mode]
+        p50_ok = (
+            stats["p50_ms"] <= TARGET_P50_MS if stats["p50_ms"] is not None else None
+        )
+        p95_ok = (
+            stats["p95_ms"] <= TARGET_P95_MS if stats["p95_ms"] is not None else None
+        )
+        lines.append(
+            f"| `{mode}` | {format_number(stats['avg_ms'], '.1f')} | "
+            f"{format_number(stats['p50_ms'], '.1f')} | {_eval_badge(p50_ok)} | "
+            f"{format_number(stats['p95_ms'], '.1f')} | {_eval_badge(p95_ok)} | "
+            f"{format_number(stats['p99_ms'], '.1f')} | {format_number(stats['max_ms'], '.1f')} | "
+            f"{stats['degraded']} | {format_number(stats['degraded_rate'], '.1%')} | "
+            f"{stats['errors']} | {format_number(stats['error_rate'], '.1%')} | "
+            f"{stats['timeouts']} |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Phân rã độ trễ theo từng chặng (Pipeline Stages)",
+            "",
+            "| Chế độ | Stage 0 Extract Avg (ms) | Extract p95 (ms) | Stage 1 Evidence Avg (ms) | Evidence p95 (ms) | Stage 2 Assess Avg (ms) | Assess p95 (ms) |",
+            "|---|---:|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for mode in ("llm_factcheck", "full"):
+        stats = stats_by_mode[mode]
+        lines.append(
+            f"| `{mode}` | {format_number(stats['extract_avg_ms'], '.1f')} | "
+            f"{format_number(stats['extract_p95_ms'], '.1f')} | "
+            f"{format_number(stats['evidence_avg_ms'], '.1f')} | "
+            f"{format_number(stats['evidence_p95_ms'], '.1f')} | "
+            f"{format_number(stats['assess_avg_ms'], '.1f')} | "
+            f"{format_number(stats['assess_p95_ms'], '.1f')} |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Trạng thái các dịch vụ thành phần",
+            "",
+            "| Chế độ | Dịch vụ | OK | Empty | Error |",
+            "|---|---|---:|---:|---:|",
+        ]
+    )
+    for mode in MODES:
+        service_counts = stats_by_mode[mode]["service_counts"]
+        for service, counter in service_counts.items():
+            if not counter:
+                continue
+            lines.append(
+                f"| `{mode}` | `{service}` | {counter['ok']} | {counter['empty']} | {counter['error']} |"
+            )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _build_cost_report(
+    stats_by_mode: dict[str, dict],
+    header_meta: str,
+) -> str:
+    lines = [
+        "# Nhóm 3: Chi phí, Token & Tài nguyên Vận hành",
+        "",
+        header_meta,
+        "",
+        (
+            f"Ngưỡng tham chiếu: Chi phí ≤ ${TARGET_COST_USD:.2f}/lượt. "
+            "Số liệu token được tổng hợp trên tất cả các lượt gọi Gemini (trích xuất + đánh giá + retry)."
+        ),
+        "",
+        "## Tiêu thụ Token & Chi phí trung bình mỗi lượt",
+        "",
+        (
+            "| Chế độ | Input TB | Output TB | Thought TB | Cached TB | Total TB | "
+            "Min Total | Max Total | p95 Total | FactCheck TB | Tavily Credit TB | "
+            "USD/lượt | Đánh giá Cost | Tổng USD | Ước tính 1K lượt (USD) |"
+        ),
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|",
+    ]
+    for mode in MODES:
+        stats = stats_by_mode[mode]
+        cost_ok = (
+            stats["cost_per_check"] <= TARGET_COST_USD
+            if stats["cost_per_check"] is not None
+            else None
+        )
+        cost_1k = (
+            stats["cost_per_check"] * 1000
+            if stats["cost_per_check"] is not None
+            else None
+        )
+        lines.append(
+            f"| `{mode}` | "
+            f"{format_number(stats['avg_input_tokens'], '.1f')} | "
+            f"{format_number(stats['avg_output_tokens'], '.1f')} | "
+            f"{format_number(stats['avg_thought_tokens'], '.1f')} | "
+            f"{format_number(stats['avg_cached_tokens'], '.1f')} | "
+            f"{format_number(stats['avg_total_tokens'], '.1f')} | "
+            f"{format_number(stats['min_total_tokens'], '.0f')} | "
+            f"{format_number(stats['max_total_tokens'], '.0f')} | "
+            f"{format_number(stats['p95_total_tokens'], '.0f')} | "
+            f"{format_number(stats['avg_factcheck_calls'], '.2f')} | "
+            f"{format_number(stats['avg_tavily_credits'], '.2f')} | "
+            f"{format_number(stats['cost_per_check'], '.6f')} | {_eval_badge(cost_ok)} | "
+            f"{format_number(stats['total_cost_usd'], '.6f')} | "
+            f"{format_number(cost_1k, '.2f')} |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Tổng tài nguyên đợt chạy & Tình trạng Quota / Fallback",
+            "",
+            "| Chế độ | Tổng Input Token | Tổng Output Token | Tổng All Token | Gemini Calls TB | Chạm Quota (Retry) | Model Fallback | Các Model đã dùng |",
+            "|---|---:|---:|---:|---:|---:|---:|---|",
+        ]
+    )
+    for mode in MODES:
+        stats = stats_by_mode[mode]
+        models_str = (
+            ", ".join(f"`{m}` ({c})" for m, c in stats["models_counter"].most_common())
+            or "—"
+        )
+        lines.append(
+            f"| `{mode}` | "
+            f"{format_number(stats['total_input_tokens'], ',.0f')} | "
+            f"{format_number(stats['total_output_tokens'], ',.0f')} | "
+            f"{format_number(stats['total_all_tokens'], ',.0f')} | "
+            f"{format_number(stats['avg_gemini_calls'], '.2f')} | "
+            f"{stats['quota_retries']} | {stats['model_fallbacks']} | {models_str} |"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _build_comparison_report(
+    rows_by_mode: dict[str, list[ResultRow]],
+    stats_by_mode: dict[str, dict],
+    validity_by_mode: dict[str, tuple[float | None, int, int]],
+    header_meta: str,
+) -> str:
+    lines = [
+        "# Nhóm 4: So sánh Chế độ & Đánh giá Tổng hợp Sản phẩm",
+        "",
+        header_meta,
+        "",
+        "## Bảng so sánh trực diện 4 chế độ (Ablation Matrix)",
+        "",
+        "| Chế độ | Accuracy | Macro-F1 | Unverified | p50 (ms) | p95 (ms) | Total Token TB | USD/lượt | Citation validity |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+    ]
+    for mode in MODES:
+        stats = stats_by_mode[mode]
+        validity, _, _ = validity_by_mode[mode]
+        lines.append(
+            f"| `{mode}` | {format_number(stats['accuracy'], '.1%')} | "
+            f"{format_number(stats['macro_f1'], '.3f')} | "
+            f"{format_number(stats['unverified_rate'], '.1%')} | "
+            f"{format_number(stats['p50_ms'], '.1f')} | "
+            f"{format_number(stats['p95_ms'], '.1f')} | "
+            f"{format_number(stats['avg_total_tokens'], '.1f')} | "
+            f"{format_number(stats['cost_per_check'], '.6f')} | "
+            f"{format_number(validity, '.1%')} |"
+        )
+
+    # Đối chiếu full vs llm_only
+    llm_by_id = {r.sample.id: r for r in rows_by_mode["llm_only"]}
+    full_by_id = {r.sample.id: r for r in rows_by_mode["full"]}
+    both_correct = full_fixed = full_regressed = both_wrong = compared = 0
+    for sample_id, full_row in full_by_id.items():
+        llm_row = llm_by_id.get(sample_id)
+        if (
+            llm_row is None
+            or full_row.evaluation.prediction is None
+            or llm_row.evaluation.prediction is None
+        ):
+            continue
+        compared += 1
+        full_ok = full_row.evaluation.prediction == full_row.sample.label
+        llm_ok = llm_row.evaluation.prediction == llm_row.sample.label
+        if full_ok and llm_ok:
+            both_correct += 1
+        elif full_ok and not llm_ok:
+            full_fixed += 1
+        elif not full_ok and llm_ok:
+            full_regressed += 1
+        else:
+            both_wrong += 1
+
+    full_stats = stats_by_mode["full"]
+    llm_stats = stats_by_mode["llm_only"]
+    delta_acc = (
+        full_stats["accuracy"] - llm_stats["accuracy"]
+        if full_stats["accuracy"] is not None and llm_stats["accuracy"] is not None
+        else None
+    )
+    delta_f1 = (
+        full_stats["macro_f1"] - llm_stats["macro_f1"]
+        if full_stats["macro_f1"] is not None and llm_stats["macro_f1"] is not None
+        else None
+    )
+    latency_ratio = (
+        full_stats["p50_ms"] / llm_stats["p50_ms"]
+        if full_stats["p50_ms"] is not None and llm_stats["p50_ms"]
+        else None
+    )
+    cost_ratio = (
+        full_stats["cost_per_check"] / llm_stats["cost_per_check"]
+        if full_stats["cost_per_check"] is not None and llm_stats["cost_per_check"]
+        else None
+    )
+
+    lines.extend(
+        [
+            "",
+            "## Giá trị gia tăng của Pipeline (`full` vs `llm_only`)",
+            "",
+            f"- **Chênh lệch Accuracy (`full - llm_only`)**: {format_number(delta_acc, '+.1%') if delta_acc is not None else '—'}",
+            f"- **Chênh lệch Macro-F1 (`full - llm_only`)**: {format_number(delta_f1, '+.3f') if delta_f1 is not None else '—'}",
+            f"- **Đánh đổi độ trễ p50 (`full / llm_only`)**: {format_number(latency_ratio, '.2f')}x",
+            f"- **Đánh đổi chi phí (`full / llm_only`)**: {format_number(cost_ratio, '.2f')}x",
+            f"- **Đối chiếu từng mẫu ({compared} cặp hoàn tất)**:",
+            f"  - Cả 2 cùng đúng: **{both_correct}**",
+            f"  - `full` sửa ĐÚNG khi `llm_only` sai/unverified: **{full_fixed}**",
+            f"  - `full` bị SAI khi `llm_only` đúng (Regression): **{full_regressed}**",
+            f"  - Cả 2 cùng sai: **{both_wrong}**",
+            "",
+            "## Chấm điểm Tiêu chí Sản phẩm (`full`)",
+            "",
+            "| Tiêu chí | Ngưỡng mục tiêu | Giá trị đo được | Trạng thái |",
+            "|---|---|---:|---|",
+        ]
+    )
+
+    full_validity, _, _ = validity_by_mode["full"]
+    checks = [
+        (
+            "Accuracy",
+            f"≥ {TARGET_ACCURACY:.0%}",
+            format_number(full_stats["accuracy"], ".1%"),
+            full_stats["accuracy"] >= TARGET_ACCURACY
+            if full_stats["accuracy"] is not None
+            else None,
+        ),
+        (
+            "Macro-F1",
+            f"≥ {TARGET_MACRO_F1:.2f}",
+            format_number(full_stats["macro_f1"], ".3f"),
+            full_stats["macro_f1"] >= TARGET_MACRO_F1
+            if full_stats["macro_f1"] is not None
+            else None,
+        ),
+        (
+            "Tỷ lệ Unverified",
+            f"{TARGET_UNVERIFIED_MIN:.0%} – {TARGET_UNVERIFIED_MAX:.0%}",
+            format_number(full_stats["unverified_rate"], ".1%"),
+            TARGET_UNVERIFIED_MIN
+            <= full_stats["unverified_rate"]
+            <= TARGET_UNVERIFIED_MAX
+            if full_stats["unverified_rate"] is not None
+            else None,
+        ),
+        (
+            "Citation validity",
+            f"≥ {TARGET_CITATION_VALIDITY:.0%}",
+            format_number(full_validity, ".1%"),
+            full_validity >= TARGET_CITATION_VALIDITY
+            if full_validity is not None
+            else None,
+        ),
+        (
+            "Latency p50",
+            f"≤ {TARGET_P50_MS:,.0f} ms",
+            format_number(full_stats["p50_ms"], ".1f"),
+            full_stats["p50_ms"] <= TARGET_P50_MS
+            if full_stats["p50_ms"] is not None
+            else None,
+        ),
+        (
+            "Latency p95",
+            f"≤ {TARGET_P95_MS:,.0f} ms",
+            format_number(full_stats["p95_ms"], ".1f"),
+            full_stats["p95_ms"] <= TARGET_P95_MS
+            if full_stats["p95_ms"] is not None
+            else None,
+        ),
+        (
+            "Degraded rate",
+            f"< {TARGET_DEGRADED_RATE:.0%}",
+            format_number(full_stats["degraded_rate"], ".1%"),
+            full_stats["degraded_rate"] < TARGET_DEGRADED_RATE
+            if full_stats["degraded_rate"] is not None
+            else None,
+        ),
+        (
+            "Error rate",
+            f"< {TARGET_ERROR_RATE:.0%}",
+            format_number(full_stats["error_rate"], ".1%"),
+            full_stats["error_rate"] < TARGET_ERROR_RATE
+            if full_stats["error_rate"] is not None
+            else None,
+        ),
+        (
+            "Chi phí / lượt",
+            f"≤ ${TARGET_COST_USD:.2f}",
+            f"${format_number(full_stats['cost_per_check'], '.6f')}"
+            if full_stats["cost_per_check"] is not None
+            else "—",
+            full_stats["cost_per_check"] <= TARGET_COST_USD
+            if full_stats["cost_per_check"] is not None
+            else None,
+        ),
+        (
+            "Vượt trội hơn `llm_only`",
+            "Δ Accuracy ≥ 0 & Δ F1 ≥ 0",
+            f"Acc {format_number(delta_acc, '+.1%')}, F1 {format_number(delta_f1, '+.3f')}"
+            if delta_acc is not None and delta_f1 is not None
+            else "—",
+            (delta_acc >= 0 and delta_f1 >= 0)
+            if delta_acc is not None and delta_f1 is not None
+            else None,
+        ),
+    ]
+
+    passed_count = 0
+    evaluated_count = 0
+    failed_items = []
+    for name, target, measured, ok in checks:
+        lines.append(f"| {name} | {target} | {measured} | {_eval_badge(ok)} |")
+        if ok is not None:
+            evaluated_count += 1
+            if ok:
+                passed_count += 1
+            else:
+                failed_items.append(name)
+
+    if evaluated_count == 0:
+        verdict_summary = "Chưa đủ dữ liệu để kết luận."
+    elif not failed_items:
+        verdict_summary = (
+            f"**ĐẠT CHUẨN ({passed_count}/{evaluated_count} tiêu chí đo được)** — "
+            "Sản phẩm chạy ổn định, chất lượng tốt và đáng để đưa vào sử dụng."
+        )
+    else:
+        verdict_summary = (
+            f"**ĐẠT {passed_count}/{evaluated_count} TIÊU CHÍ** — "
+            f"Cần tối ưu thêm các mục chưa đạt: {', '.join(failed_items)}."
+        )
+
+    lines.extend(["", f"### Kết luận tổng quan: {verdict_summary}", ""])
+    return "\n".join(lines)
+
+
 def write_reports(
-    rows: list[ResultRow], out_dir: Path, day: str, judgments: Path | None
+    rows: list[ResultRow],
+    run_dir: Path,
+    timestamp_label: str,
+    dataset_name: str,
+    judgments: Path | None,
 ) -> None:
-    out_dir.mkdir(parents=True, exist_ok=True)
-    stem = f"benchmark_{day}"
-    citation_path = out_dir / f"{stem}_citations.csv"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    citation_path = run_dir / "citations.csv"
     grades = read_grades(citation_path)
     if judgments is not None:
         grades.update(read_grades(judgments))
@@ -417,7 +1155,7 @@ def write_reports(
             citations.append((*key, grades.get(key, "")))
     write_csv(citation_path, (*CITATION_KEY, "supports_verdict"), citations)
     write_csv(
-        out_dir / f"{stem}.csv",
+        run_dir / "results.csv",
         (
             "id",
             "mode",
@@ -425,10 +1163,31 @@ def write_reports(
             "topic",
             "date",
             "prediction",
+            "correct",
             "error",
             "degraded",
+            "timed_out",
+            "confidence_score",
+            "explanation_words",
             "latency_ms",
+            "extract_ms",
+            "evidence_ms",
+            "assess_ms",
+            "input_tokens",
+            "output_tokens",
+            "thought_tokens",
+            "cached_tokens",
+            "total_tokens",
+            "gemini_calls",
+            "factcheck_calls",
+            "tavily_credits",
+            "quota_retries",
+            "model_fallbacks",
+            "models_used",
             "estimated_cost_usd",
+            "factcheck_status",
+            "tavily_status",
+            "gemini_status",
             "cached",
             "citation_count",
         ),
@@ -440,12 +1199,35 @@ def write_reports(
                 row.sample.topic,
                 row.sample.date,
                 row.evaluation.prediction,
+                row.evaluation.prediction == row.sample.label
+                if row.evaluation.prediction is not None
+                else None,
                 row.evaluation.error,
                 row.evaluation.degraded,
+                row.evaluation.timed_out,
+                row.evaluation.confidence_score,
+                row.evaluation.explanation_words,
                 row.evaluation.latency_ms
                 if row.evaluation.error != "cache_miss"
                 else None,
+                row.evaluation.extract_ms,
+                row.evaluation.evidence_ms,
+                row.evaluation.assess_ms,
+                row.evaluation.input_tokens,
+                row.evaluation.output_tokens,
+                row.evaluation.thought_tokens,
+                row.evaluation.cached_tokens,
+                row.evaluation.total_tokens,
+                row.evaluation.gemini_calls,
+                row.evaluation.factcheck_calls,
+                row.evaluation.tavily_credits,
+                row.evaluation.quota_retries,
+                row.evaluation.model_fallbacks,
+                ";".join(row.evaluation.models_used),
                 row.evaluation.estimated_cost_usd,
+                row.evaluation.service_status.get("factcheck"),
+                row.evaluation.service_status.get("tavily"),
+                row.evaluation.service_status.get("gemini"),
                 row.cached,
                 len(row.evaluation.citation_urls),
             )
@@ -453,68 +1235,32 @@ def write_reports(
         ),
     )
 
-    lines = [
-        f"# Benchmark kiểm chứng · {day}",
-        "",
-        (
-            "Accuracy, macro-F1, tỷ lệ unverified và latency tính trên các mẫu có dự đoán. "
-            "Macro-F1 dùng cả bốn nhãn và gán F1 bằng 0 cho nhãn không có mẫu thực hay dự đoán. "
-            "Latency cộng thời gian xử lý các lần thử và bỏ thời gian chờ quota. "
-            "p50 và p95 dùng nearest rank. Cache giữ độ trễ và chi phí của lần chạy gốc."
-        ),
-        "",
-        (
-            "Chi phí là trung bình trên các lượt có ước tính, gồm chi phí retry khi có đủ usage. "
-            "Citation validity chỉ tính các nguồn đã chấm. Dấu — biểu thị chưa có số liệu."
-        ),
-        "",
-        (
-            "| Chế độ | Hoàn tất | Lỗi | Degraded | Accuracy | Macro-F1 | Unverified | "
-            "p50 (ms) | p95 (ms) | USD/lượt | Lượt có cost | Citation validity | Nguồn đã chấm |"
-        ),
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
-    ]
-    matrices = []
+    rows_by_mode = {mode: [row for row in rows if row.mode == mode] for mode in MODES}
+    stats_by_mode = {mode: summarize(subset) for mode, subset in rows_by_mode.items()}
+    validity_by_mode: dict[str, tuple[float | None, int, int]] = {}
     for mode in MODES:
-        subset = [row for row in rows if row.mode == mode]
-        stats = summarize(subset)
         mode_citations = [citation[-1] for citation in citations if citation[1] == mode]
         graded = [grade for grade in mode_citations if grade]
         validity = graded.count("true") / len(graded) if graded else None
-        lines.append(
-            f"| `{mode}` | {stats['completed']}/{len(subset)} | {len(subset) - stats['completed']} | "
-            f"{stats['degraded']} | {format_number(stats['accuracy'], '.1%')} | "
-            f"{format_number(stats['macro_f1'], '.3f')} | {format_number(stats['unverified_rate'], '.1%')} | "
-            f"{format_number(stats['p50_ms'], '.1f')} | {format_number(stats['p95_ms'], '.1f')} | "
-            f"{format_number(stats['cost_per_check'], '.6f')} | {stats['cost_count']} | "
-            f"{format_number(validity, '.1%')} | {len(graded)}/{len(mode_citations)} |"
-        )
-        matrices.extend(
-            [
-                "",
-                f"## Ma trận nhầm lẫn · `{mode}`",
-                "",
-                "| Nhãn thật / dự đoán | " + " | ".join(LABELS) + " |",
-                "|---|---:|---:|---:|---:|",
-                *(
-                    f"| {actual} | "
-                    + " | ".join(
-                        str(stats["matrix"][actual, predicted]) for predicted in LABELS
-                    )
-                    + " |"
-                    for actual in LABELS
-                ),
-            ]
-        )
-    lines.extend(matrices)
-    lines.extend(
-        [
-            "",
-            f"Điền `true` hoặc `false` ở cột `supports_verdict` trong [{citation_path.name}]({citation_path.name}).",
-            "",
-        ]
-    )
-    (out_dir / f"{stem}.md").write_text("\n".join(lines), encoding="utf-8")
+        validity_by_mode[mode] = (validity, len(graded), len(mode_citations))
+
+    sample_count = len(rows_by_mode[MODES[0]]) if MODES else 0
+    header_meta = f"> Dataset: `{dataset_name}` ({sample_count} mẫu) · Thời gian: {timestamp_label}"
+
+    report_files = {
+        "01_chat_luong_va_do_tin_cay.md": _build_quality_report(
+            rows_by_mode, stats_by_mode, validity_by_mode, header_meta
+        ),
+        "02_hieu_nang_va_trai_nghiem.md": _build_performance_report(
+            stats_by_mode, header_meta
+        ),
+        "03_chi_phi_va_tai_nguyen.md": _build_cost_report(stats_by_mode, header_meta),
+        "04_so_sanh_va_danh_gia_tong_hop.md": _build_comparison_report(
+            rows_by_mode, stats_by_mode, validity_by_mode, header_meta
+        ),
+    }
+    for filename, content in report_files.items():
+        (run_dir / filename).write_text(content, encoding="utf-8")
 
 
 async def run(args: argparse.Namespace) -> int:
@@ -596,11 +1342,26 @@ async def run(args: argparse.Namespace) -> int:
                             )
                         cache[key] = evaluation
                 rows.append(ResultRow(sample, mode, evaluation, cached is not None))
-    day = datetime.now(VIETNAM_TIMEZONE).date().isoformat()
-    write_reports(rows, args.output_dir, day, args.judgments)
-    print(
-        f"Đã xuất {len(rows)} lượt mẫu–chế độ vào {args.output_dir / f'benchmark_{day}.md'}"
+                print(
+                    f"[{sample.id}][{mode}] "
+                    f"pred={evaluation.prediction or evaluation.error} | "
+                    f"{evaluation.latency_ms:.1f}ms | "
+                    f"tokens={evaluation.total_tokens if evaluation.total_tokens is not None else '—'} "
+                    f"(in={evaluation.input_tokens if evaluation.input_tokens is not None else '—'}, "
+                    f"out={evaluation.output_tokens if evaluation.output_tokens is not None else '—'}) | "
+                    f"cost=${format_number(evaluation.estimated_cost_usd, '.6f')}"
+                    f"{' [cache]' if cached is not None else ''}"
+                )
+    now = datetime.now(VIETNAM_TIMEZONE)
+    run_dir = args.output_dir / f"{args.dataset.stem}_{now:%d-%m-%Y_%H-%M-%S}"
+    write_reports(
+        rows,
+        run_dir,
+        now.strftime("%d-%m-%Y %H:%M:%S"),
+        args.dataset.name,
+        args.judgments,
     )
+    print(f"Đã xuất {len(rows)} lượt mẫu–chế độ vào thư mục {run_dir}")
     return int(any(row.evaluation.error for row in rows))
 
 
