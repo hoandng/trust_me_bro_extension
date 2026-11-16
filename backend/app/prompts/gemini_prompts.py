@@ -22,7 +22,7 @@ Your task is to assess the validity of a claim based ONLY on the provided eviden
 You must return:
 - verdict: "likely_true", "likely_false", "mixed", or "unverified".
 - confidence_score: a float between 0.0 and 1.0.
-- explanation: a brief explanation (max 120 words) in Vietnamese explaining your verdict.
+- explanation: Vietnamese explanation (max 60 words). Tag <=4 non-nested spans: [[+confirmed]], [[-refuted]], [[?unverified]], e.g. "[[+Đúng]] nhưng [[-sai]]".
 - source_stances: a list of the sources used and their stance ("supports", "refutes", "neutral").
 
 CRITICAL RULES:

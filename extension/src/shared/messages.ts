@@ -1,4 +1,4 @@
-import type { FeedbackSubmission, SelectionPayload } from '../features/analysis/types';
+import type { FeedbackRating, FeedbackSubmission, SelectionPayload } from '../features/analysis/types';
 
 export interface AnalyzeRequestMessage {
   type: 'ANALYZE_REQUEST';
@@ -18,9 +18,15 @@ export interface SubmitFeedbackMessage extends FeedbackSubmission {
 
 export type ExtensionMessage = AnalyzeRequestMessage | AnalysisTabMessage | SubmitFeedbackMessage;
 
+export const MAX_FEEDBACK_COMMENT_LENGTH = 500;
+
 export function isRequestId(value: unknown): value is string {
   return typeof value === 'string' &&
     /^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i.test(value);
+}
+
+export function isFeedbackRating(value: unknown): value is FeedbackRating {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 5;
 }
 
 function isTabId(value: unknown): value is number {
@@ -28,11 +34,20 @@ function isTabId(value: unknown): value is number {
 }
 
 export function isSubmitFeedbackMessage(message: unknown): message is SubmitFeedbackMessage {
-  return !!message && typeof message === 'object' &&
-    'type' in message && message.type === 'SUBMIT_ANALYSIS_FEEDBACK' &&
-    'tabId' in message && isTabId(message.tabId) &&
-    'request_id' in message && isRequestId(message.request_id) &&
-    'helpful' in message && typeof message.helpful === 'boolean';
+  if (!message || typeof message !== 'object') return false;
+  const candidate = message as Record<string, unknown>;
+  const allowedKeys = new Set(['type', 'tabId', 'request_id', 'rating', 'comment']);
+  for (const key of Object.keys(candidate)) {
+    if (!allowedKeys.has(key)) return false;
+  }
+  return (
+    candidate.type === 'SUBMIT_ANALYSIS_FEEDBACK' &&
+    isTabId(candidate.tabId) &&
+    isRequestId(candidate.request_id) &&
+    isFeedbackRating(candidate.rating) &&
+    (candidate.comment === undefined ||
+      (typeof candidate.comment === 'string' && candidate.comment.length <= MAX_FEEDBACK_COMMENT_LENGTH))
+  );
 }
 
 export function isAnalysisTabMessage(message: unknown): message is AnalysisTabMessage {

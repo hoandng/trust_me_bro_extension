@@ -19,6 +19,71 @@ from app.services.gemini_model_pool import (
 
 logger = logging.getLogger(__name__)
 VIETNAM_TIMEZONE = timezone(timedelta(hours=7), "Asia/Ho_Chi_Minh")
+MAX_EXPLANATION_MARKERS = 4
+VALID_MARKER_PREFIXES = ("+", "-", "?")
+
+
+def neutralize_marker_delimiters(value: str | None) -> str | None:
+    """Vô hiệu hoá chuỗi '[[' và ']]' trong dữ liệu đầu vào để chống giả mạo đánh dấu."""
+    if value is None:
+        return None
+    cleaned = value
+    while "[[" in cleaned or "]]" in cleaned:
+        cleaned = cleaned.replace("[[", "[ [").replace("]]", "] ]")
+    return cleaned
+
+
+def is_valid_explanation_markup(
+    text: str, max_markers: int = MAX_EXPLANATION_MARKERS
+) -> bool:
+    """Kiểm tra ký hiệu [[+...]], [[-...]], [[?...]] cân bằng, không lồng và tối đa 4 đoạn."""
+    i = 0
+    n = len(text)
+    in_marker = False
+    marker_count = 0
+    content_start = 0
+
+    while i < n:
+        if text.startswith("[[", i):
+            if in_marker:
+                return False
+            if i + 3 > n or text[i + 2] not in VALID_MARKER_PREFIXES:
+                return False
+            marker_count += 1
+            if marker_count > max_markers:
+                return False
+            in_marker = True
+            i += 3
+            content_start = i
+            continue
+        if text.startswith("]]", i):
+            if not in_marker:
+                return False
+            if not text[content_start:i].strip():
+                return False
+            in_marker = False
+            i += 2
+            continue
+        i += 1
+
+    return not in_marker
+
+
+def strip_explanation_markers(text: str) -> str:
+    """Bỏ toàn bộ ký hiệu đánh dấu để trả về văn bản thường."""
+    cleaned = text
+    for prefix in ("[[+", "[[-", "[[?"):
+        cleaned = cleaned.replace(prefix, "")
+    while "[[" in cleaned or "]]" in cleaned:
+        cleaned = cleaned.replace("[[", "").replace("]]", "")
+    return cleaned
+
+
+def sanitize_explanation_markers(text: str) -> str:
+    """Giữ nguyên ký hiệu nếu hợp lệ, ngược lại bỏ hết ký hiệu và trả về văn bản thường."""
+    if is_valid_explanation_markup(text):
+        return text
+    return strip_explanation_markers(text)
 
 
 class ClaimExtraction(BaseModel):
@@ -54,7 +119,7 @@ class Assessment(BaseModel):
         description="Confidence score between 0.0 and 1.0.", ge=0.0, le=1.0
     )
     explanation: str = Field(
-        description="Brief explanation in Vietnamese, max 120 words."
+        description="Brief explanation in Vietnamese, max 60 words."
     )
     source_stances: list[SourceStance] = Field(
         description="List of sources used and their stances."
@@ -136,7 +201,8 @@ class GeminiService:
 
         model_usage = model_usage or ModelUsage(requested_model=settings.gemini_model)
 
-        prompt = f"<post>\n{text}\n</post>"
+        safe_text = neutralize_marker_delimiters(text) or ""
+        prompt = f"<post>\n{safe_text}\n</post>"
 
         response_format = [
             {
@@ -191,20 +257,25 @@ class GeminiService:
         evidence_text = ""
         valid_urls = set()
         for i, src in enumerate(evidence):
+            safe_title = neutralize_marker_delimiters(src.title)
+            safe_snippet = neutralize_marker_delimiters(src.snippet)
+            safe_claim_text = neutralize_marker_delimiters(src.claim_text)
             evidence_text += (
-                f"Source {i + 1}:\nURL: {src.url}\nTitle: {src.title}\nSnippet: {src.snippet}\n"
+                f"Source {i + 1}:\nURL: {src.url}\nTitle: {safe_title}\nSnippet: {safe_snippet}\n"
                 f"Source tier: {source_tier(src.url)}\n"
                 f"Published date: {src.published_date or 'unknown'}\n"
                 f"Source type: {'factcheck' if src.original_stance is not None else 'tavily'}\n"
-                f"FactCheck claim: {src.claim_text}\n"
+                f"FactCheck claim: {safe_claim_text}\n"
                 f"Original stance: {src.original_stance}\n\n"
             )
             valid_urls.add(src.url)
 
         today = datetime.now(VIETNAM_TIMEZONE).date().isoformat()
+        safe_text = neutralize_marker_delimiters(text)
+        safe_claim = neutralize_marker_delimiters(claim)
         input_text = (
             f"Current date (Asia/Ho_Chi_Minh): {today}\n"
-            f"Claim to verify: {claim}\n\n<post>\n{text}\n</post>\n\nEvidence:\n{evidence_text}"
+            f"Claim to verify: {safe_claim}\n\n<post>\n{safe_text}\n</post>\n\nEvidence:\n{evidence_text}"
         )
 
         response_format = [
@@ -228,6 +299,9 @@ class GeminiService:
                 raw_output = interaction.output_text
                 if raw_output:
                     result = Assessment.model_validate_json(raw_output)
+                    result.explanation = sanitize_explanation_markers(
+                        result.explanation
+                    )
 
                     # Filter out hallucinatory URLs
                     filtered_stances = [

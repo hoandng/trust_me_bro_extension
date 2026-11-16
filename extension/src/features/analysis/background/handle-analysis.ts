@@ -66,7 +66,9 @@ export async function handleAnalysisRequest(
     payload = { ...message.payload };
     delete payload.model_id;
     if (model) payload.model_id = model;
+    const startedAt = Date.now();
     const response = await analyzeSelection(payload);
+    response.duration_ms = Math.max(0, Date.now() - startedAt);
     await publish({ status: 'success', request: payload, response });
   } catch (error) {
     await publish({

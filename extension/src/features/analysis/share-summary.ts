@@ -1,3 +1,4 @@
+import { stripExplanationMarkers } from './explanation-parser';
 import { safeSourceUrl } from './source-url';
 import type { AnalyzeResponse, SelectionPayload } from './types';
 
@@ -25,11 +26,14 @@ export function buildShareSummary(response: AnalyzeResponse, post?: SelectionPay
     return privateValues.some((original) => normalized.includes(original));
   };
 
-  const explanation = response.explanation.trim().replace(/\s+/g, ' ');
-  const reasons = containsOriginal(explanation) ? [] : Array.from(
-    sentences.segment(explanation),
-    ({ segment }) => segment.trim(),
-  ).filter(Boolean).slice(0, 2).map(shorten);
+  const cleanExplanation = stripExplanationMarkers(response.explanation).trim().replace(/\s+/g, ' ');
+  const reasons =
+    containsOriginal(cleanExplanation) || containsOriginal(response.explanation)
+      ? []
+      : Array.from(sentences.segment(cleanExplanation), ({ segment }) => segment.trim())
+          .filter(Boolean)
+          .slice(0, 2)
+          .map(shorten);
 
   const postUrl = post ? safeSourceUrl(post.page_url) : undefined;
   if (postUrl) postUrl.hash = '';

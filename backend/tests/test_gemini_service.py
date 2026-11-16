@@ -472,3 +472,108 @@ async def test_interactions_status_code_body_error_rotates(
     assert await service.extract_claims("A claim", model_usage=usage) is not None
     assert model_ring.remaining("gemini-a") >= 119
     assert usage.extraction_model == "gemini-b"
+
+
+@pytest.mark.asyncio
+async def test_neutralizes_marker_delimiters_in_user_text_claim_and_evidence(
+    mock_gemini_client,
+):
+    service = GeminiService()
+    mock_gemini_client.aio.interactions.create = AsyncMock(
+        return_value=extraction_response()
+    )
+    await service.extract_claims("Bài viết có [[[+đánh dấu giả]]] và [[-bác bỏ giả]]")
+    extract_input = mock_gemini_client.aio.interactions.create.call_args.kwargs["input"]
+    assert "[[" not in extract_input
+    assert "]]" not in extract_input
+
+    mock_gemini_client.aio.interactions.create = AsyncMock(
+        return_value=MagicMock(
+            output_text=json.dumps(
+                {
+                    "verdict": "likely_true",
+                    "confidence_score": 0.9,
+                    "explanation": "Tin [[+đã được xác nhận]].",
+                    "source_stances": [],
+                }
+            )
+        )
+    )
+    evidence = [
+        Source(
+            title="Tiêu đề [[+giả mạo]]",
+            url="https://example.com/1",
+            snippet="Đoạn trích [[-giả mạo]] và [[[?lồng]]]",
+            claim_text="Khẳng định [[?giả mạo]]",
+            original_stance="supports",
+        )
+    ]
+    await service.assess(
+        "Bài viết [[+giả]]",
+        "Claim [[-giả]]",
+        evidence,
+    )
+    assess_input = mock_gemini_client.aio.interactions.create.call_args.kwargs["input"]
+    assert "[[" not in assess_input
+    assert "]]" not in assess_input
+    assert "Tiêu đề [ [+giả mạo] ]" in assess_input
+    assert "Đoạn trích [ [-giả mạo] ] và [ [ [?lồng] ] ]" in assess_input
+    assert "FactCheck claim: Khẳng định [ [?giả mạo] ]" in assess_input
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("raw_explanation", "expected"),
+    [
+        (
+            "Văn bản bình thường không có ký hiệu.",
+            "Văn bản bình thường không có ký hiệu.",
+        ),
+        (
+            "Tin [[+đúng sự kiện]] nhưng [[-sai địa điểm]] và [[?chưa rõ số liệu]].",
+            "Tin [[+đúng sự kiện]] nhưng [[-sai địa điểm]] và [[?chưa rõ số liệu]].",
+        ),
+        (
+            "[[+Một]] [[-Hai]] [[?Ba]] [[+Bốn]]",
+            "[[+Một]] [[-Hai]] [[?Ba]] [[+Bốn]]",
+        ),
+        (
+            "[[+Một]] [[-Hai]] [[?Ba]] [[+Bốn]] [[-Năm]]",
+            "Một Hai Ba Bốn Năm",
+        ),
+        (
+            "Tin [[+chưa đóng ngoặc và [[-còn dở",
+            "Tin chưa đóng ngoặc và còn dở",
+        ),
+        (
+            "Tin dư ngoặc đóng]] ở giữa.",
+            "Tin dư ngoặc đóng ở giữa.",
+        ),
+        (
+            "Tin [[+lồng [[-bên trong]] sai quy tắc]].",
+            "Tin lồng bên trong sai quy tắc.",
+        ),
+        (
+            "Tin [[không có dấu trạng thái]] hoặc [[+   ]].",
+            "Tin không có dấu trạng thái hoặc    .",
+        ),
+        ("", ""),
+    ],
+)
+async def test_assess_sanitizes_explanation_markers(
+    mock_gemini_client, raw_explanation, expected
+):
+    mock_gemini_client.aio.interactions.create = AsyncMock(
+        return_value=MagicMock(
+            output_text=json.dumps(
+                {
+                    "verdict": "mixed",
+                    "confidence_score": 0.6,
+                    "explanation": raw_explanation,
+                    "source_stances": [],
+                }
+            )
+        )
+    )
+    result = await GeminiService().assess("Post", "Claim", [])
+    assert result.explanation == expected

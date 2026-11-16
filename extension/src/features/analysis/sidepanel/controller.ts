@@ -1,22 +1,36 @@
 import { getFromBackend } from '../../../infrastructure/api/backend-client';
-import { getPreferredModel, savePreferredModel } from '../model-preference';
+import {
+  getCachedModelCatalog,
+  getPreferredModel,
+  savePreferredModel,
+  setCachedModelCatalog,
+} from '../model-preference';
+import type { ModelCatalog } from '../model-preference';
+import { isFeedbackEndpointEnabled } from '../../../shared/config';
 import { isRequestId } from '../../../shared/messages';
 import type { AnalysisTabMessage, SubmitFeedbackMessage } from '../../../shared/messages';
 import { subscribeToTabStates } from '../state-store';
-import type { FeedbackReply, TabAnalysisState } from '../types';
+import type { FeedbackRating, FeedbackReply, TabAnalysisState } from '../types';
 import { bindAnalysisView, renderAnalysisState, renderFeedbackState } from './render';
 
 export async function initAnalysisPanel(): Promise<void> {
-  void initModelSelector();
   let currentTabId: number | undefined;
   let loadVersion = 0;
   let currentState: TabAnalysisState = { status: 'idle' };
   const pendingFeedback = new Set<string>();
+  let modelSelectorLoaded = false;
+  let modelSelectorLoading = false;
+  let modelChangeBound = false;
 
   function refreshFeedback(error?: string) {
     const id = currentState.status === 'success' ? currentState.response?.request_id : undefined;
     const available = isRequestId(id);
-    renderFeedbackState(available, currentState.feedback, available && pendingFeedback.has(id), error);
+    renderFeedbackState(
+      available,
+      currentState.feedback,
+      available && pendingFeedback.has(id),
+      error,
+    );
   }
 
   function showState(state: TabAnalysisState) {
@@ -51,20 +65,96 @@ export async function initAnalysisPanel(): Promise<void> {
     }
   });
 
-  bindAnalysisView(() => {
-    void retryAnalysis().catch(console.error);
-  }, (helpful) => {
-    void submitFeedback(helpful);
-  });
+  async function ensureModelSelectorLoaded(): Promise<void> {
+    if (modelSelectorLoaded || modelSelectorLoading) return;
+    modelSelectorLoading = true;
+    const selector = document.getElementById('model-selector') as HTMLSelectElement;
+    const hint = document.getElementById('model-hint') as HTMLParagraphElement;
+    hint.textContent = 'Đang tải danh sách model...';
 
-  async function submitFeedback(helpful: boolean) {
+    try {
+      let catalog = await getCachedModelCatalog();
+      if (!catalog) {
+        catalog = await getFromBackend<ModelCatalog>('/api/v1/models');
+        await setCachedModelCatalog(catalog);
+      }
+      const preferred = await getPreferredModel();
+      const saved = preferred && catalog.models.includes(preferred) ? preferred : '';
+      if (preferred && !saved) await savePreferredModel('');
+
+      selector.replaceChildren();
+      const defaultOption = new Option(`Mặc định (${catalog.default_model})`, '');
+      selector.add(defaultOption);
+      for (const model of catalog.models) {
+        selector.add(new Option(model, model));
+      }
+      selector.value = saved;
+      selector.disabled = false;
+      modelSelectorLoaded = true;
+      hint.textContent = 'Áp dụng cho lần phân tích tiếp theo. Tự chuyển model khi chạm hạn mức.';
+
+      if (!modelChangeBound) {
+        modelChangeBound = true;
+        selector.addEventListener('change', () => {
+          selector.disabled = true;
+          void savePreferredModel(selector.value)
+            .then(() => {
+              hint.textContent = 'Đã lưu. Áp dụng cho lần phân tích tiếp theo.';
+            })
+            .catch(() => {
+              hint.textContent = 'Không lưu được lựa chọn. Vui lòng thử lại.';
+            })
+            .finally(() => {
+              selector.disabled = false;
+            });
+        });
+      }
+    } catch {
+      hint.textContent = 'Không tải được danh sách model. Lựa chọn đã lưu vẫn được giữ.';
+    } finally {
+      modelSelectorLoading = false;
+    }
+  }
+
+  bindAnalysisView(
+    () => {
+      void retryAnalysis().catch(console.error);
+    },
+    (rating, comment) => {
+      void submitFeedback(rating, comment);
+    },
+    (open) => {
+      if (open) {
+        void ensureModelSelectorLoaded();
+      }
+    },
+  );
+
+  async function submitFeedback(rating: FeedbackRating, comment?: string) {
+    if (!isFeedbackEndpointEnabled()) {
+      refreshFeedback('Tính năng đánh giá sẽ sớm có');
+      return;
+    }
+
     const tabId = currentTabId;
     const id = currentState.response?.request_id;
-    if (tabId === undefined || currentState.status !== 'success' ||
-        !isRequestId(id) || pendingFeedback.has(id)) return;
+    if (
+      tabId === undefined ||
+      currentState.status !== 'success' ||
+      !isRequestId(id) ||
+      pendingFeedback.has(id) ||
+      currentState.feedback !== undefined
+    ) {
+      return;
+    }
 
+    const trimmedComment = comment?.trim();
     const message: SubmitFeedbackMessage = {
-      type: 'SUBMIT_ANALYSIS_FEEDBACK', tabId, request_id: id, helpful,
+      type: 'SUBMIT_ANALYSIS_FEEDBACK',
+      tabId,
+      request_id: id,
+      rating,
+      ...(trimmedComment ? { comment: trimmedComment } : {}),
     };
     pendingFeedback.add(id);
     refreshFeedback();
@@ -79,12 +169,18 @@ export async function initAnalysisPanel(): Promise<void> {
 
     if (currentTabId !== tabId || currentState.response?.request_id !== id) return;
     if (reply?.ok) {
-      currentState.feedback = helpful;
+      currentState.feedback = {
+        request_id: id,
+        rating,
+        ...(trimmedComment ? { comment: trimmedComment } : {}),
+      };
       void loadState(tabId).catch(() => {
         // Phản hồi đã được gửi, giữ xác nhận nếu lần đọc lại trạng thái thất bại.
       });
     }
-    refreshFeedback(reply?.ok ? undefined : (reply?.error ?? 'Chưa gửi được phản hồi. Hãy thử lại sau.'));
+    refreshFeedback(
+      reply?.ok ? undefined : (reply?.error ?? 'Chưa gửi được phản hồi. Hãy thử lại sau.'),
+    );
   }
 
   async function retryAnalysis() {
@@ -102,35 +198,5 @@ export async function initAnalysisPanel(): Promise<void> {
     chrome.action.setBadgeText({ text: '', tabId: currentTabId }).catch(console.error);
   } else {
     showState({ status: 'idle' });
-  }
-}
-
-async function initModelSelector(): Promise<void> {
-  const selector = document.getElementById('model-selector') as HTMLSelectElement;
-  const hint = document.getElementById('model-hint') as HTMLParagraphElement;
-  try {
-    const [catalog, preferred] = await Promise.all([
-      getFromBackend<{ default_model: string; models: string[] }>('/api/v1/models'),
-      getPreferredModel(),
-    ]);
-    const saved = preferred && catalog.models.includes(preferred) ? preferred : '';
-    if (preferred && !saved) await savePreferredModel('');
-    selector.replaceChildren();
-    const defaultOption = new Option(`Mặc định (${catalog.default_model})`, '');
-    selector.add(defaultOption);
-    for (const model of catalog.models) selector.add(new Option(model, model));
-    selector.value = saved;
-    selector.disabled = false;
-    hint.textContent = 'Áp dụng cho lần phân tích tiếp theo. Tự chuyển model khi chạm hạn mức.';
-    selector.addEventListener('change', () => {
-      selector.disabled = true;
-      void savePreferredModel(selector.value).then(() => {
-        hint.textContent = 'Đã lưu. Áp dụng cho lần phân tích tiếp theo.';
-      }).catch(() => {
-        hint.textContent = 'Không lưu được lựa chọn. Vui lòng thử lại.';
-      }).finally(() => { selector.disabled = false; });
-    });
-  } catch {
-    hint.textContent = 'Không tải được danh sách model. Lựa chọn đã lưu vẫn được giữ.';
   }
 }

@@ -10,7 +10,7 @@ function manifestPlugin(): Plugin {
     generateBundle() {
       const manifest = {
         manifest_version: 3,
-        name: 'Fact Check Extension',
+        name: 'TrustMeBro',
         version: '1.0.0',
         permissions: ['sidePanel', 'storage'],
         host_permissions: ['https://*.reddit.com/*', 'https://*.facebook.com/*', backendUrl],
@@ -33,7 +33,7 @@ function manifestPlugin(): Plugin {
           '128': 'icons/icon128.png',
         },
         action: {
-          default_title: 'Open Side Panel',
+          default_title: 'TrustMeBro',
           default_icon: {
             '16': 'icons/icon16.png',
             '48': 'icons/icon48.png',
