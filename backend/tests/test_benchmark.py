@@ -2,6 +2,7 @@ import asyncio
 import csv
 import importlib
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -9,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 import respx
+
 from app.core.config import GeminiTokenPrices, settings
 from app.prompts.gemini_prompts import ASSESS_PROMPT, EXTRACT_CLAIMS_PROMPT
 from app.services.gemini_model_pool import GeminiModelPool, GeminiQuotaExhausted
@@ -21,7 +23,8 @@ TAVILY_URL = "https://api.tavily.com/search"
 @pytest.fixture
 def benchmark(monkeypatch):
     monkeypatch.syspath_prepend(str(ROOT))
-    return importlib.import_module("scripts.benchmark.run_benchmark")
+    mod = importlib.import_module("scripts.benchmark.run_benchmark")
+    return importlib.reload(mod)
 
 
 @pytest.fixture
@@ -33,30 +36,40 @@ def benchmark_api(monkeypatch, benchmark):
     monkeypatch.setattr(settings, "gemini_api_key", "fake")
     monkeypatch.setattr(settings, "factcheck_api_key", "fake")
     monkeypatch.setattr(settings, "tavily_api_key", "fake")
-    monkeypatch.setattr(settings, "gemini_model", "gemini-benchmark-test")
+    monkeypatch.setattr(settings, "gemini_model", "gemini-3.1-flash-lite")
     monkeypatch.setattr(settings, "gemini_models", [])
     monkeypatch.setattr(settings, "search_query_limit", 2)
     monkeypatch.setattr(
         settings,
         "gemini_token_prices",
         {
-            "gemini-benchmark-test": GeminiTokenPrices(
-                input_usd_per_million=1, output_usd_per_million=2
+            "gemini-3.1-flash-lite": GeminiTokenPrices(
+                input_usd_per_million=1.0, output_usd_per_million=2.0
             )
         },
     )
-    monkeypatch.setattr(settings, "tavily_usd_per_credit", 0.01)
+    monkeypatch.setattr(settings, "tavily_usd_per_credit", 0.005)
     monkeypatch.setattr("app.services.gemini_service.model_pool", GeminiModelPool())
 
     async def respond(**kwargs):
         assert kwargs["store"] is False
         assert "tools" not in kwargs
+        gen_cfg = kwargs["generation_config"]
+        assert gen_cfg["temperature"] == 0.0
+        assert gen_cfg["thinking_level"] == "low"
+        assert gen_cfg["max_output_tokens"] >= 1024
+
         text = kwargs["input"].split("<post>\n", 1)[1].split("\n</post>", 1)[0]
         sample = samples[text]
         prompt = kwargs["system_instruction"]
         if prompt == benchmark.LLM_ONLY_PROMPT:
-            assert kwargs["input"] == f"<post>\n{text}\n</post>"
-            payload = {"verdict": sample.label}
+            payload = {
+                "verdict": {"true": "likely_true", "false": "likely_false"}.get(
+                    sample.label, sample.label
+                ),
+                "confidence_score": 0.8,
+                "explanation": "Synthetic explanation",
+            }
         elif prompt == EXTRACT_CLAIMS_PROMPT:
             payload = {
                 "main_claim": text,
@@ -70,13 +83,13 @@ def benchmark_api(monkeypatch, benchmark):
                 "verdict": {"true": "likely_true", "false": "likely_false"}.get(
                     sample.label, sample.label
                 ),
-                "confidence_score": 0.7,
-                "explanation": text,  # Phản hồi có thể lặp lại nguyên văn và không được lưu.
+                "confidence_score": 0.85,
+                "explanation": "Synthetic assessment",
                 "source_stances": [],
             }
         return SimpleNamespace(
             output_text=json.dumps(payload),
-            usage=SimpleNamespace(total_input_tokens=10, total_output_tokens=5),
+            usage=SimpleNamespace(total_input_tokens=100, total_output_tokens=50),
         )
 
     sdk = MagicMock()
@@ -87,79 +100,69 @@ def benchmark_api(monkeypatch, benchmark):
     return sdk_factory, samples
 
 
-def read_csv(path):
+def read_csv(path: Path) -> list[dict[str, str]]:
     with path.open(encoding="utf-8-sig", newline="") as file:
         return list(csv.DictReader(file))
 
 
-def write_csv(path, rows):
-    with path.open("w", encoding="utf-8-sig", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=tuple(rows[0]))
-        writer.writeheader()
-        writer.writerows(rows)
-
-
-def test_sample_end_to_end_resume_and_manual_citations(
+def test_end_to_end_3_modes_output_naming_and_cache_resume(
     benchmark, benchmark_api, tmp_path
 ):
     sdk, samples = benchmark_api
     assert len(samples) == 10
-    assert {row.topic for row in samples.values()} == benchmark.TOPICS
-    assert {row.label for row in samples.values()} == set(benchmark.LABELS)
-    output = tmp_path / "reports"
+    output = tmp_path / "results"
     cache = tmp_path / "cache.db"
-    args = ["--output-dir", str(output), "--cache", str(cache), "--limit", "10"]
+    dataset_path = benchmark.BENCHMARK_DIR / "dataset.csv"
+    args = [
+        "--dataset",
+        str(dataset_path),
+        "--output-dir",
+        str(output),
+        "--cache",
+        str(cache),
+        "--limit",
+        "4",
+        "--min-interval",
+        "0",
+        "--sample-delay",
+        "0",
+    ]
 
     def factcheck_response(request):
         text = request.url.params["query"]
         sample = samples[text]
         if sample.label == "unverified":
             return httpx.Response(200, json={"claims": []})
-        ratings = {
-            "true": ["True"],
-            "false": ["Not true"],
-            "mixed": ["True", "False"],
-        }[sample.label]
         return httpx.Response(
             200,
             json={
                 "claims": [
                     {
-                        "text": text.upper().rstrip("."),
+                        "text": text,
                         "claimReview": [
                             {
-                                "url": f"https://factcheck.org/{sample.id}/{index}",
-                                "title": text,
-                                "textualRating": rating,
-                            }
-                            for index, rating in enumerate(ratings)
-                        ],
-                    },
-                    {
-                        "text": "Unrelated claim",
-                        "claimReview": [
-                            {
-                                "url": "https://example.com/unrelated",
-                                "textualRating": "False",
+                                "url": f"https://factcheck.org/{sample.id}",
+                                "title": "Fact Check Review",
+                                "textualRating": "True"
+                                if sample.label == "true"
+                                else "False",
                             }
                         ],
-                    },
+                    }
                 ]
             },
         )
 
     def tavily_response(request):
         payload = json.loads(request.content)
-        sample = samples[payload["query"]]
-        assert payload["topic"] == "news"
         return httpx.Response(
             200,
             json={
                 "results": [
                     {
-                        "title": sample.text,
-                        "url": f"https://reuters.com/{sample.id}",
-                        "content": sample.text,
+                        "title": "News Article",
+                        "url": f"https://reuters.com/{hash(payload['query']) % 1000}",
+                        "content": "Supporting evidence.",
                     }
                 ],
                 "usage": {"credits": 1},
@@ -171,116 +174,53 @@ def test_sample_end_to_end_resume_and_manual_citations(
         tavily = router.post(TAVILY_URL).mock(side_effect=tavily_response)
         assert benchmark.main(args) == 0
 
-    assert factcheck.call_count == 34
-    # Chỉ full gọi Tavily, một lượt cho mỗi mẫu.
-    assert tavily.call_count == 10
-    assert sdk.return_value.aio.interactions.create.await_count == 48
-    sdk.return_value.aio.aclose.assert_awaited_once()
-    run_dirs = sorted(output.glob("dataset_*"))
+    assert factcheck.call_count >= 8
+    assert tavily.call_count == 4
+    # 4 llm_only + 7 llm_factcheck (sample-03 skips assess when 0 sources) + 8 full = 19 calls
+    assert sdk.return_value.aio.interactions.create.await_count == 19
+
+    run_dirs = sorted(output.iterdir())
     assert len(run_dirs) == 1
     run_dir = run_dirs[0]
-    quality_report = run_dir / "01_chat_luong_va_do_tin_cay.md"
-    perf_report = run_dir / "02_hieu_nang_va_trai_nghiem.md"
-    cost_report = run_dir / "03_chi_phi_va_tai_nguyen.md"
-    summary_report = run_dir / "04_so_sanh_va_danh_gia_tong_hop.md"
-    result_path = run_dir / "results.csv"
-    grade_path = run_dir / "citations.csv"
-    for path in (
-        quality_report,
-        perf_report,
-        cost_report,
-        summary_report,
-        result_path,
-        grade_path,
-    ):
-        assert path.is_file()
+    assert re.fullmatch(r"dataset_\d{2}-\d{2}-\d{4}_\d{2}-\d{2}-\d{2}", run_dir.name)
 
-    rows = read_csv(result_path)
-    assert len(rows) == 40
-    assert all(row["prediction"] == row["label"] and not row["error"] for row in rows)
-    assert {row["mode"] for row in rows} == set(benchmark.MODES)
-    llm_only = next(row for row in rows if row["mode"] == "llm_only")
-    full = next(row for row in rows if row["mode"] == "full")
-    assert float(llm_only["estimated_cost_usd"]) == pytest.approx(0.00002)
-    assert float(full["estimated_cost_usd"]) == pytest.approx(0.01004)
-    assert int(llm_only["input_tokens"]) == 10
-    assert int(llm_only["output_tokens"]) == 5
-    assert int(llm_only["total_tokens"]) == 15
-    assert int(full["input_tokens"]) == 20
-    assert int(full["output_tokens"]) == 10
-    assert int(full["total_tokens"]) == 30
-    assert quality_report.read_text(encoding="utf-8").count("Ma trận nhầm lẫn ·") == 4
-    assert "Stage 0 Extract" in perf_report.read_text(encoding="utf-8")
-    assert "Ước tính 1K lượt" in cost_report.read_text(encoding="utf-8")
-    assert "Kết luận tổng quan" in summary_report.read_text(encoding="utf-8")
-    citations = read_csv(grade_path)
-    assert len(citations) == 56
-    assert all(not row["supports_verdict"] for row in citations)
-    assert not any(
-        row["mode"] == "factcheck_only" and row["citation_url"].endswith("/unrelated")
-        for row in citations
-    )
-    assert not any(
-        row["mode"] == "llm_factcheck" and "reuters.com" in row["citation_url"]
-        for row in citations
-    )
+    for fname in ("report.md", "raw.csv", "summary.json", "chart.png"):
+        assert (run_dir / fname).is_file(), f"Missing {fname}"
+
+    rows = read_csv(run_dir / "raw.csv")
+    assert len(rows) == 12
+    assert {r["mode"] for r in rows} == set(benchmark.MODES)
+    assert all(r["prediction"] == r["label"] and not r["error"] for r in rows)
+
+    # Privacy check: raw post text and dataset source URLs must not be saved in outputs/cache
     for path in (
         cache,
-        quality_report,
-        perf_report,
-        cost_report,
-        summary_report,
-        result_path,
-        grade_path,
+        run_dir / "raw.csv",
+        run_dir / "report.md",
+        run_dir / "summary.json",
     ):
-        contents = path.read_bytes()
-        assert all(text.encode() not in contents for text in samples)
-        assert b"example.invalid/benchmark/" not in contents
+        blob = path.read_bytes()
+        assert all(text.encode() not in blob for text in samples)
+        assert b"example.invalid/benchmark/" not in blob
 
-    first, second = (
-        row
-        for row in citations
-        if row["mode"] == "factcheck_only"
-        and row["prediction"] == "mixed"
-        and row["id"] == "sample-04"
-    )
-    first["supports_verdict"] = "true"
-    second["supports_verdict"] = "false"
-    write_csv(grade_path, citations)
-    sdk.reset_mock()
+    # Cache-only and resume run must make zero Gemini API / HTTP calls
+    sdk.return_value.aio.interactions.create.reset_mock()
     with respx.mock(assert_all_mocked=True) as router:
-        assert (
-            benchmark.main([*args, "--cache-only", "--judgments", str(grade_path)]) == 0
-        )
-        # Chạy thường cũng phải dùng cache khi mọi cặp đã có.
-        assert benchmark.main([*args, "--judgments", str(grade_path)]) == 0
+        assert benchmark.main([*args, "--cache-only"]) == 0
+        assert benchmark.main(args) == 0
         assert router.calls.call_count == 0
-    sdk.assert_not_called()
-    latest_dir = max(output.glob("dataset_*"))
-    assert all(row["cached"] == "True" for row in read_csv(latest_dir / "results.csv"))
-    assert sorted(
-        row["supports_verdict"]
-        for row in read_csv(latest_dir / "citations.csv")
-        if row["supports_verdict"]
-    ) == ["false", "true"]
-    assert "50.0% | 2/10" in (latest_dir / "01_chat_luong_va_do_tin_cay.md").read_text(
-        encoding="utf-8"
-    )
+    sdk.return_value.aio.interactions.create.assert_not_awaited()
 
 
-def test_limit_and_http_quota_retry(benchmark, benchmark_api, tmp_path):
-    sdk, _ = benchmark_api
-    args = [
-        "--output-dir",
-        str(tmp_path),
-        "--cache",
-        str(tmp_path / "cache.db"),
-        "--limit",
-        "1",
-    ]
+def test_http_429_retry_and_daily_quota_abort(
+    benchmark, benchmark_api, tmp_path, monkeypatch
+):
+    _sdk, _ = benchmark_api
+    monkeypatch.setattr(benchmark.asyncio, "sleep", AsyncMock())
+
     counts = 0
 
-    def factcheck_response(request):
+    def factcheck_429_then_ok(request):
         nonlocal counts
         counts += 1
         if counts == 1:
@@ -292,131 +232,168 @@ def test_limit_and_http_quota_retry(benchmark, benchmark_api, tmp_path):
                     {
                         "text": request.url.params["query"],
                         "claimReview": [
-                            {
-                                "url": "https://factcheck.org/example",
-                                "textualRating": "True",
-                            }
+                            {"url": "https://factcheck.org/1", "textualRating": "True"}
                         ],
                     }
                 ]
             },
         )
 
-    with respx.mock(assert_all_called=True) as router:
-        factcheck = router.get(FACTCHECK_URL).mock(side_effect=factcheck_response)
-        tavily = router.post(TAVILY_URL).mock(
-            return_value=httpx.Response(
-                200,
-                json={
-                    "results": [
-                        {"title": "Reference", "url": "https://reuters.com/example"}
-                    ],
-                    "usage": {"credits": 1},
-                },
-            )
-        )
-        assert benchmark.main(args) == 0
-        assert factcheck.call_count == 4
-        assert tavily.call_count == 1
-        assert sdk.return_value.aio.interactions.create.await_count == 5
-        cache_before = (tmp_path / "cache.db").read_bytes()
-        assert benchmark.main([*args, "--bypass-cache"]) == 0
-        assert (tmp_path / "cache.db").read_bytes() == cache_before
-        assert factcheck.call_count == 7
-        assert tavily.call_count == 2
-        assert sdk.return_value.aio.interactions.create.await_count == 10
-    result_path = max(tmp_path.glob("dataset_*/results.csv"))
-    rows = read_csv(result_path)
-    assert len(rows) == 4
-    assert {row["id"] for row in rows} == {"sample-01"}
-    assert all(row["prediction"] == "true" for row in rows)
-    assert all(row["cached"] == "False" for row in rows)
-
-
-def test_gemini_quota_retry_and_wait_cap(benchmark, monkeypatch):
-    sleep = AsyncMock()
-    monkeypatch.setattr(benchmark.asyncio, "sleep", sleep)
-    sample = benchmark.Sample("test", "Synthetic text", "true", "other", "2026-11-11")
-    modes = SimpleNamespace(
-        predict=AsyncMock(
-            side_effect=[
-                GeminiQuotaExhausted(3),
-                benchmark.Evaluation(prediction="true"),
-            ]
-        )
-    )
-    assert (
-        asyncio.run(benchmark.evaluate(modes, "llm_only", sample, 1)).prediction
-        == "true"
-    )
-    sleep.assert_awaited_once_with(3)
-    sleep.reset_mock()
-    modes.predict = AsyncMock(side_effect=GeminiQuotaExhausted(86400))
-    assert (
-        asyncio.run(benchmark.evaluate(modes, "llm_only", sample, 2)).error == "quota"
-    )
-    modes.predict.assert_awaited_once()
-    sleep.assert_not_awaited()
-
-
-def test_empty_cache_only_and_missing_keys_do_not_start_requests(
-    benchmark, benchmark_api, tmp_path, monkeypatch
-):
-    sdk, _ = benchmark_api
-    monkeypatch.setattr(settings, "factcheck_api_key", "")
     args = [
+        "--dataset",
+        str(benchmark.BENCHMARK_DIR / "dataset.csv"),
         "--output-dir",
-        str(tmp_path),
+        str(tmp_path / "results"),
         "--cache",
-        str(tmp_path / "empty.db"),
+        str(tmp_path / "cache.db"),
+        "--modes",
+        "llm_factcheck",
         "--limit",
         "1",
+        "--min-interval",
+        "0",
+        "--sample-delay",
+        "0",
     ]
-    with respx.mock(assert_all_mocked=True) as router:
-        with pytest.raises(SystemExit) as exit_info:
-            benchmark.main(args)
-        assert exit_info.value.code == 2
-        assert benchmark.main([*args, "--cache-only"]) == 1
-        assert router.calls.call_count == 0
-    sdk.assert_not_called()
-    result_path = max(tmp_path.glob("dataset_*/results.csv"))
-    assert {row["error"] for row in read_csv(result_path)} == {"cache_miss"}
+    with respx.mock(assert_all_called=True) as router:
+        fc = router.get(FACTCHECK_URL).mock(side_effect=factcheck_429_then_ok)
+        assert benchmark.main(args) == 0
+        assert fc.call_count == 2
 
-
-def test_metrics_with_incorrect_predictions(benchmark):
-    pairs = [
-        ("true", "true"),
-        ("false", "true"),
-        ("mixed", "mixed"),
-        ("unverified", "unverified"),
-    ]
-    rows = [
-        benchmark.ResultRow(
-            benchmark.Sample(
-                str(index), "Synthetic text", actual, "other", "2026-11-11"
-            ),
-            "full",
-            benchmark.Evaluation(
-                prediction=predicted,
-                latency_ms=index * 10,
-                estimated_cost_usd=index if index < 3 else None,
-                input_tokens=index * 100,
-                output_tokens=index * 20,
-                total_tokens=index * 120,
-            ),
-            False,
+    # Daily quota error (> max_wait) stops cleanly and returns exit code 1
+    sample = benchmark.Sample("id-1", "Text", "true", "other", "2026-11-17")
+    with pytest.raises(benchmark.DailyQuotaExhausted):
+        asyncio.run(
+            benchmark.evaluate_with_retry(
+                mode="llm_only",
+                sample=sample,
+                repeat=1,
+                model="gemini-3.1-flash-lite",
+                max_retries=2,
+                max_wait_seconds=60.0,
+                gemini=SimpleNamespace(
+                    classify_chatbot=AsyncMock(side_effect=GeminiQuotaExhausted(86400)),
+                    last_sleep_seconds=0.0,
+                ),
+                factcheck_orch=None,
+                full_orch=None,
+                gemini_input_price=None,
+                gemini_output_price=None,
+                tavily_credit_price=None,
+            )
         )
-        for index, (actual, predicted) in enumerate(pairs, 1)
-    ]
-    stats = benchmark.summarize(rows)
-    assert stats["matrix"]["false", "true"] == 1
-    assert stats["accuracy"] == 0.75
-    assert stats["macro_f1"] == pytest.approx((2 / 3 + 0 + 1 + 1) / 4)
-    assert stats["unverified_rate"] == 0.25
-    assert stats["p50_ms"] == 20
-    assert stats["p95_ms"] == 40
-    assert stats["cost_per_check"] == 1.5
-    assert stats["avg_input_tokens"] == 250
-    assert stats["avg_output_tokens"] == 50
-    assert stats["avg_total_tokens"] == 300
-    assert stats["total_all_tokens"] == 1200
+
+
+def test_truncate_text_and_metrics_summary(benchmark):
+    long_text = " ".join(["token"] * 600)
+    trimmed = benchmark.truncate_text(long_text, 200)
+    assert len(trimmed) <= 200
+    assert trimmed.endswith("...")
+
+    # Create paired rows where full outperforms llm_only significantly
+    rows = []
+    for i in range(20):
+        gold = ["true", "false", "mixed", "unverified"][i % 4]
+        is_recent = "yes" if i < 10 else "no"
+        # llm_only gets 5/20 right and makes critical errors
+        llm_pred = gold if i < 5 else ("false" if gold == "true" else "true")
+        # full gets 19/20 right and 0 critical errors
+        full_pred = gold if i < 19 else "unverified"
+        rows.append(
+            benchmark.EvaluationRow(
+                id=f"s-{i}",
+                mode="llm_only",
+                repeat=1,
+                label=gold,
+                topic="other",
+                is_recent=is_recent,
+                prediction=llm_pred,
+                correct=(llm_pred == gold),
+                critical_error=(
+                    (gold == "true" and llm_pred == "false")
+                    or (gold == "false" and llm_pred == "true")
+                ),
+                confidence_score=0.7,
+                n_sources=0,
+                factcheck_hits=0,
+                tavily_hits=0,
+                latency_ms=1500.0,
+                extract_ms=None,
+                evidence_ms=None,
+                assess_ms=None,
+                input_tokens=100,
+                output_tokens=40,
+                thought_tokens=0,
+                cached_tokens=0,
+                total_tokens=140,
+                gemini_calls=1,
+                factcheck_calls=0,
+                tavily_credits=0,
+                estimated_cost_usd=0.0001,
+                models_used="gemini-3.1-flash-lite",
+                quota_retries=0,
+            )
+        )
+        rows.append(
+            benchmark.EvaluationRow(
+                id=f"s-{i}",
+                mode="full",
+                repeat=1,
+                label=gold,
+                topic="other",
+                is_recent=is_recent,
+                prediction=full_pred,
+                correct=(full_pred == gold),
+                critical_error=False,
+                confidence_score=0.9,
+                n_sources=2,
+                factcheck_hits=0,
+                tavily_hits=2,
+                latency_ms=4200.0,
+                extract_ms=1000,
+                evidence_ms=1500,
+                assess_ms=1700,
+                input_tokens=1000,
+                output_tokens=200,
+                thought_tokens=0,
+                cached_tokens=0,
+                total_tokens=1200,
+                gemini_calls=2,
+                factcheck_calls=1,
+                tavily_credits=1,
+                estimated_cost_usd=0.0085,
+                models_used="gemini-3.1-flash-lite",
+                quota_retries=0,
+            )
+        )
+
+    out_dir = Path("tmp_test_report_unused")
+    del out_dir  # we test pure functions directly
+    summaries = {
+        m: benchmark.summarize_mode([r for r in rows if r.mode == m])
+        for m in ("llm_only", "full")
+    }
+    mc = benchmark.exact_mcnemar(
+        [r for r in rows if r.mode == "llm_only"],
+        [r for r in rows if r.mode == "full"],
+    )
+    worth = benchmark.evaluate_worth_using(summaries, mc)
+    assert mc["b_improved"] == 15
+    assert mc["c_regressed"] == 0
+    assert mc["p_value"] < 0.05
+    assert worth["verdict"] == "ĐÁNG SỬ DỤNG"
+
+    md = benchmark.build_report_markdown(
+        dataset_name="test.csv",
+        n_samples=20,
+        model="gemini-3.1-flash-lite",
+        run_ts="17-11-2026 09:20:00",
+        rows=rows,
+        summaries=summaries,
+        mc_full_llm=mc,
+        mc_full_fc={"b_improved": 0, "c_regressed": 0, "p_value": 1.0},
+        worth=worth,
+        used_fallback_price=False,
+    )
+    assert "is_recent=yes" in md
+    assert "ĐÁNG SỬ DỤNG" in md
