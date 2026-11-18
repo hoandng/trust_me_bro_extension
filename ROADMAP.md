@@ -1,67 +1,66 @@
 # ROADMAP.md
 
-> Dự án: Extension kiểm chứng độ tin cậy bài đăng mạng xã hội
+> Dự án: **Trust Me Bro** — Browser Extension kiểm chứng độ tin cậy nội dung mạng xã hội  
+> Trạng thái hiện tại: **MVP hoàn chỉnh về lõi kỹ thuật & đo lường** (hỗ trợ Facebook + Reddit, bộ chọn & xoay vòng model Gemini, SQLite metrics/cache, benchmark 3 chế độ).  
+> Tham chiếu định hướng kinh doanh tại [BUSINESS.md](BUSINESS.md), chi tiết kiến trúc tại [ARCHITECTURE.md](ARCHITECTURE.md) và yêu cầu bảo mật tại [SECURITY_CHECKLIST.md](SECURITY_CHECKLIST.md).
 
-## Trạng thái hiện tại
+---
 
-- **Phiên bản:** v0.1 (demo)
-- **Giai đoạn:** MVP — chỉ hỗ trợ Facebook
-- **Cập nhật lần cuối:** 2026-09-27
+## Milestone 1: MVP End-to-End trên Facebook
 
-## Mục tiêu tổng thể
+Mục tiêu: Chứng minh luồng kiểm chứng hoạt động từ trình duyệt tới AI backend.
 
-Xây dựng một extension giúp người dùng kiểm tra nhanh độ tin cậy của bất kỳ đoạn nội dung nào trên mạng xã hội, có trích dẫn nguồn rõ ràng, mở rộng dần ra nhiều nền tảng và nhiều nguồn dữ liệu kiểm chứng.
+- [x] Khung dự án: Chrome Extension Manifest V3 (Vite + TypeScript) + Backend FastAPI.
+- [x] Content script: bắt vùng văn bản bôi đen (20–2000 ký tự) trên Facebook, hiển thị nút nổi trong Shadow DOM.
+- [x] Background & Side Panel: truyền message nội bộ, gọi `POST /api/v1/analyze` và hiển thị kết luận, độ tin cậy, giải thích, danh sách nguồn.
+- [x] Tích hợp 3 dịch vụ bên ngoài: Gemini API (Interactions API), Google Fact Check Tools API, Tavily Search API.
+- [x] Orchestrator 3 giai đoạn: trích xuất khẳng định → tra cứu song song Fact Check & Tavily → đánh giá tổng hợp có trích dẫn nguồn.
+- [x] Bảo mật cơ bản: giữ API key bên thứ ba ở `.env` backend, CORS theo `ALLOWED_ORIGINS`, giới hạn độ dài input và body size.
 
-## Milestone 1: MVP Demo (Facebook only) — đang làm
+---
 
-Mục tiêu: chứng minh luồng hoạt động end-to-end.
+## Milestone 2: Ổn định, Trải nghiệm người dùng & Nền tảng đo lường
 
-- [x] Setup project: extension skeleton (Manifest V3) + backend skeleton (FastAPI)
-- [x] Content script: bắt sự kiện bôi đen text trên Facebook, hiện nút "Phân tích đoạn văn này"
-- [x] Background script: gửi text đã chọn sang backend, nhận response
-- [x] Side panel UI: hiển thị kết quả (verdict, độ tin cậy, giải thích, danh sách nguồn)
-- [x] Backend: endpoint `POST /api/v1/analyze`
-- [x] Service: tích hợp Google Fact Check Tools API
-- [x] Service: tích hợp Tavily API (tìm nguồn liên quan)
-- [x] Service: tích hợp Gemini API (phân tích + tổng hợp đánh giá cuối)
-- [x] Orchestrator: gọi song song 3 service, tổng hợp kết quả thành 1 response chuẩn
-- [x] Bảo mật cơ bản: API key backend qua `.env`, CORS giới hạn theo extension ID, giới hạn độ dài input
-- [x] Test thủ công toàn luồng trên 5-10 bài post Facebook thực tế (có tin thật, tin giả, tin chưa rõ)
+Mục tiêu: Hệ thống ổn định, chống lạm dụng chi phí, đo được chất lượng và chi phí thực tế.
 
-## Milestone 2: Ổn định & UX
+- [x] Tái cấu trúc extension theo tính năng (`entrypoints/`, `features/analysis/`, `infrastructure/`, `shared/`) và bổ sung test mock (`npm test`).
+- [x] Trạng thái rõ ràng theo từng tab (`idle`, `loading` 3 bước, `success`, `error`, `RETRY_ANALYSIS`) và dọn RAM/session khi đóng hoặc chuyển trang.
+- [x] Rate limiting nhiều tầng ở backend (IP/phút, Key/ngày, Global/ngày) và xử lý IP tin cậy sau reverse proxy (`TRUST_PROXY_HEADERS`).
+- [x] Trả trạng thái từng dịch vụ (`service_status`) khi nhà cung cấp tra cứu lỗi hoặc hết thời gian (`ANALYSIS_TIMEOUT_SECONDS=25`).
+- [x] Bộ chọn model Gemini trên Side Panel (tải lười khi mở Cài đặt, lưu `chrome.storage.local`), tự xoay vòng model khi gặp `429` và trả `503` + `Retry-After` khi cạn quota toàn bộ model.
+- [x] **A1 — Chuẩn hóa Fact Check:** Bảng rating tiếng Anh & tiếng Việt, khóa `original_stance`, chỉ cho phép nguồn Fact Check đầu tiên đổi verdict khi khớp đúng mệnh đề (`factcheck_match=true`).
+- [x] **A2 — Bằng chứng & Thời gian:** Giới hạn tối đa 2 truy vấn song song kèm fallback, xếp hạng nguồn theo tier (`trusted_domains.json`), truyền ngày Việt Nam và `published_date` để phát hiện tin cũ đăng lại.
+- [x] **A3 — Tài nguyên & Độ trễ:** Dùng chung `httpx.AsyncClient` và `genai.Client` qua lifespan, áp ngân sách monotonic và ghi log JSON thời gian từng bước (`extract_ms`, `evidence_ms`, `assess_ms`, `total_ms`).
+- [x] **B1 — Số liệu & Thống kê:** Lưu metadata phân tích (SHA-256 NFKC, không lưu text/URL gốc) và phản hồi (`POST /api/v1/feedback`) vào SQLite `metrics.db`; cung cấp `GET /api/v1/stats/summary` cho admin.
+- [x] **B2 — Benchmark 3 chế độ:** Hoàn thiện `scripts/benchmark/run_benchmark.py` so sánh `llm_only`, `llm_factcheck` và `full` kèm bộ dataset tiếng Việt 100 mẫu, resume cache và báo cáo Macro-F1 / McNemar / chi phí / độ trễ.
+- [x] **C2 — Nâng cấp Side Panel UX:** Banner kết luận dễ hiểu, mức chắc chắn 3 vạch (không phần trăm), đánh dấu giải thích 3 trạng thái (`[[+...]]`, `[[-...]]`, `[[?...]]`), ánh xạ tên báo (`publisher-names.json`), ngày xuất bản, sao chép bản tóm tắt chia sẻ và khung UI đánh giá 5 sao (tạm tắt gửi mạng qua `FEEDBACK_ENDPOINT_ENABLED = false`).
 
-Mục tiêu: extension dùng được mượt mà, xử lý lỗi tốt, sẵn sàng cho nhóm nhỏ dùng thử.
+---
 
-- [x] Xử lý trạng thái loading/error rõ ràng trong side panel
-- [x] Rate limiting phía backend (tránh spam/tốn quota API trả phí)
-- [x] Retry/fallback khi 1 trong 3 API bên ngoài lỗi hoặc timeout (không để cả response fail vì 1 service hỏng)
-- [x] Giới hạn độ dài văn bản được phép gửi phân tích + thông báo rõ cho người dùng
-- [x] Logging metadata (không log nội dung text đầy đủ) để debug và theo dõi usage
-- [x] Viết test tự động cho backend (mock 3 API ngoài)
+## Milestone 3: Hoàn thiện sản phẩm & Đồng bộ dữ liệu (Ưu tiên P0/P1)
 
-## Milestone 3: Nâng cấp tính năng (theo yêu cầu ban đầu)
+Mục tiêu: Giảm ma sát khi dùng trên News Feed, đồng bộ phản hồi người dùng và tăng độ chính xác tiếng Việt.
 
-- [ ] Chèn nút phân tích trực tiếp vào từng bài post (không cần bôi đen thủ công)
-- [ ] Chế độ click vào bài post → tự động phân tích toàn bộ nội dung post đó
-- [ ] Cache kết quả phân tích (theo hash nội dung) để tránh gọi lại API cho cùng 1 đoạn text — cần thêm database/cache layer (Redis hoặc DB nhẹ)
-- [ ] Lưu lịch sử phân tích cho người dùng (tuỳ chọn, cần thiết kế lại phần bảo mật/lưu trữ dữ liệu)
+- [x] **C1 — Cache kết quả phân tích:** Bảng `analysis_cache` trong `metrics.db` theo hash nội dung chuẩn hóa, phiên bản prompt, model và ngôn ngữ; hỗ trợ TTL theo mức tin cậy, miễn hạn mức key/ngày khi hit cache và tham số `bypass_cache`.
+- [ ] **Đồng bộ schema Feedback giữa Extension và Backend:** Thống nhất hợp đồng `/api/v1/feedback` (giữa `{request_id, rating, comment}` trên UI 5 sao của Side Panel và `{request_id, helpful, reason}` ở backend) rồi bật `FEEDBACK_ENDPOINT_ENABLED = true`.
+- [ ] **Mở rộng nguồn tin cậy Việt Nam ở Backend:** Bổ sung danh sách báo chính thống và kênh kiểm chứng Việt Nam vào `backend/app/core/trusted_domains.json` (`tier1`/`tier2`/`display_names`) và tối ưu `TAVILY_INCLUDE_DOMAINS` / truy vấn tiếng Việt.
+- [ ] **Kiểm chứng ngay trên News Feed & tự động bóc bài:** Mở rộng chèn nút kiểm chứng cho từng bài đăng ngay trên News Feed Facebook và Reddit (hiện mới hỗ trợ trang chi tiết `/comments/` trên Reddit), cho phép click kiểm chứng toàn bài không cần bôi đen.
+- [ ] **Tóm tắt bài báo:** Tạo tính năng `features/article-summary/` và endpoint backend tương ứng (định hướng cho gói nâng cao).
+- [ ] **Lịch sử phân tích cho người dùng:** Cho phép xem lại lịch sử kiểm chứng (yêu cầu thiết kế bổ sung cơ chế lưu trữ và quyền riêng tư tương ứng).
 
-## Milestone 4: Mở rộng đa nền tảng
+---
 
-- [ ] Viết adapter cho X (Twitter)
-- [ ] Viết adapter cho Reddit
-- [ ] Chuẩn hoá interface adapter để thêm nền tảng mới nhanh hơn
-- [ ] Đánh giá thêm API/nguồn dữ liệu kiểm chứng khác (ngoài Fact Check/Gemini/Tavily) để tăng độ chính xác
+## Milestone 4: Mở rộng đa nền tảng & Nguồn kiểm chứng
 
-## Milestone 5: Production-ready
+- [x] Thiết kế `PlatformAdapter` + registry và triển khai `RedditAdapter` (bôi đen + nút bài viết `/comments/`).
+- [ ] **Adapter cho X (Twitter):** Thêm `XAdapter` trong extension và cập nhật `matches`/`host_permissions` trong `extension/vite.config.ts` (backend `AnalyzeRequest.platform` đã hỗ trợ `"x"`).
+- [ ] **Đa dạng hóa nguồn dữ liệu:** Tích hợp thêm nguồn fact-check / tri thức tiếng Việt và quốc tế ngoài Google Fact Check Tools API & Tavily.
 
-- [ ] Thay static API key bằng cơ chế xác thực chuẩn hơn (issued token/OAuth) giữa extension–backend
-- [ ] Giám sát chi phí API (Gemini, Tavily tính phí theo usage) — thêm dashboard/cảnh báo
-- [ ] Đăng ký/publish lên Chrome Web Store
-- [ ] Chính sách bảo mật & điều khoản sử dụng rõ ràng cho người dùng cuối
+---
 
-## Ghi chú / rủi ro
+## Milestone 5: Production-ready & Vận hành thương mại
 
-- Facebook có thể thay đổi cấu trúc DOM bất kỳ lúc nào → content script cần được thiết kế dễ sửa (đã tính trong ARCHITECTURE.md qua adapter pattern)
-- Chi phí API (Gemini, Tavily) tăng theo usage thực tế — cần theo dõi khi mở rộng người dùng
-- Google Fact Check Tools API có độ phủ dữ liệu tiếng Việt hạn chế — cần đánh giá thêm ở Milestone 2/3, có thể cần bổ sung nguồn khác cho nội dung tiếng Việt
+- [ ] **Xác thực động:** Thay `VITE_EXTENSION_API_KEY` tĩnh trong extension bằng cơ chế đăng nhập / cấp token động (OAuth / JWT / Firebase Auth) để phân biệt người dùng và áp dụng hạn mức theo gói (Free / Pro / Team).
+- [ ] **Kho trạng thái dùng chung:** Di chuyển rate limiter, model cooldown và cache từ bộ nhớ process / SQLite local sang kho phân tán (như Redis) để chạy nhiều worker/instance an toàn.
+- [ ] **Giám sát chi phí & cảnh báo:** Xây dựng dashboard vận hành dựa trên `/api/v1/stats/summary` và đặt cảnh báo ngưỡng chi phí API Gemini/Tavily.
+- [ ] **Phát hành chính thức:** Hoàn thiện Chính sách quyền riêng tư, Điều khoản sử dụng, thử nghiệm pilot với nhóm người dùng mục tiêu và phát hành lên Chrome Web Store.

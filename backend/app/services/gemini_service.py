@@ -1,148 +1,327 @@
-import json
 import logging
-import time
-from typing import Literal, Any
+from datetime import datetime, timedelta, timezone
+from typing import Literal
 
-from pydantic import BaseModel, Field, ValidationError
 from google import genai
 from google.genai import types
+from pydantic import BaseModel, Field, ValidationError
 
 from app.core.config import settings
-from app.schemas.response import Source
-from app.prompts.gemini_prompts import EXTRACT_CLAIMS_PROMPT, ASSESS_PROMPT
+from app.core.metrics import GeminiUsage, current_metrics
+from app.core.source_ranking import source_tier
+from app.prompts.gemini_prompts import ASSESS_PROMPT, EXTRACT_CLAIMS_PROMPT
+from app.schemas.response import ModelFallback, ModelUsage, Source
+from app.services.gemini_model_pool import (
+    GeminiQuotaExhausted,
+    model_pool,
+    quota_cooldown,
+)
 
 logger = logging.getLogger(__name__)
+VIETNAM_TIMEZONE = timezone(timedelta(hours=7), "Asia/Ho_Chi_Minh")
+MAX_EXPLANATION_MARKERS = 4
+VALID_MARKER_PREFIXES = ("+", "-", "?")
+
+
+def neutralize_marker_delimiters(value: str | None) -> str | None:
+    """Vô hiệu hoá chuỗi '[[' và ']]' trong dữ liệu đầu vào để chống giả mạo đánh dấu."""
+    if value is None:
+        return None
+    cleaned = value
+    while "[[" in cleaned or "]]" in cleaned:
+        cleaned = cleaned.replace("[[", "[ [").replace("]]", "] ]")
+    return cleaned
+
+
+def is_valid_explanation_markup(
+    text: str, max_markers: int = MAX_EXPLANATION_MARKERS
+) -> bool:
+    """Kiểm tra ký hiệu [[+...]], [[-...]], [[?...]] cân bằng, không lồng và tối đa 4 đoạn."""
+    i = 0
+    n = len(text)
+    in_marker = False
+    marker_count = 0
+    content_start = 0
+
+    while i < n:
+        if text.startswith("[[", i):
+            if in_marker:
+                return False
+            if i + 3 > n or text[i + 2] not in VALID_MARKER_PREFIXES:
+                return False
+            marker_count += 1
+            if marker_count > max_markers:
+                return False
+            in_marker = True
+            i += 3
+            content_start = i
+            continue
+        if text.startswith("]]", i):
+            if not in_marker:
+                return False
+            if not text[content_start:i].strip():
+                return False
+            in_marker = False
+            i += 2
+            continue
+        i += 1
+
+    return not in_marker
+
+
+def strip_explanation_markers(text: str) -> str:
+    """Bỏ toàn bộ ký hiệu đánh dấu để trả về văn bản thường."""
+    cleaned = text
+    for prefix in ("[[+", "[[-", "[[?"):
+        cleaned = cleaned.replace(prefix, "")
+    while "[[" in cleaned or "]]" in cleaned:
+        cleaned = cleaned.replace("[[", "").replace("]]", "")
+    return cleaned
+
+
+def sanitize_explanation_markers(text: str) -> str:
+    """Giữ nguyên ký hiệu nếu hợp lệ, ngược lại bỏ hết ký hiệu và trả về văn bản thường."""
+    if is_valid_explanation_markup(text):
+        return text
+    return strip_explanation_markers(text)
+
 
 class ClaimExtraction(BaseModel):
-    main_claim: str = Field(description="The main verifiable claim extracted from the text.")
-    search_queries: list[str] = Field(description="Up to 3 brief search queries to verify the claim.", max_length=3)
+    main_claim: str = Field(
+        description="The main verifiable claim extracted from the text."
+    )
+    search_queries: list[str] = Field(
+        description="Up to 3 brief search queries to verify the claim.", max_length=3
+    )
     detected_lang: str = Field(description="The detected language of the text.")
-    is_checkable: bool = Field(description="False if it's personal opinion, a question, an ad, or not verifiable.")
+    is_checkable: bool = Field(
+        description="False if it's personal opinion, a question, an ad, or not verifiable."
+    )
+
 
 class SourceStance(BaseModel):
     url: str = Field(description="The URL of the source.")
-    stance: Literal["supports", "refutes", "neutral"] = Field(description="The stance of the source regarding the claim.")
+    stance: Literal["supports", "refutes", "neutral"] = Field(
+        description="The stance of the source regarding the claim."
+    )
+    factcheck_match: bool = Field(
+        default=False,
+        strict=True,
+        description="True only when the FactCheck claim matches the user's claim; false for Tavily or uncertain matches.",
+    )
+
 
 class Assessment(BaseModel):
-    verdict: Literal["likely_true", "likely_false", "mixed", "unverified"] = Field(description="The final verdict.")
-    confidence_score: float = Field(description="Confidence score between 0.0 and 1.0.", ge=0.0, le=1.0)
-    explanation: str = Field(description="Brief explanation in Vietnamese, max 120 words.")
-    source_stances: list[SourceStance] = Field(description="List of sources used and their stances.")
-    status: str = Field(default="ok", description="Status of the assessment, can be 'error'")
+    verdict: Literal["likely_true", "likely_false", "mixed", "unverified"] = Field(
+        description="The final verdict."
+    )
+    confidence_score: float = Field(
+        description="Confidence score between 0.0 and 1.0.", ge=0.0, le=1.0
+    )
+    explanation: str = Field(
+        description="Brief explanation in Vietnamese, max 60 words."
+    )
+    source_stances: list[SourceStance] = Field(
+        description="List of sources used and their stances."
+    )
+    status: str = Field(
+        default="ok", description="Status of the assessment, can be 'error'"
+    )
+
 
 class GeminiService:
     def __init__(self):
         # We initialize the client if there's an API key
         if settings.gemini_api_key:
-            self.client = genai.Client(api_key=settings.gemini_api_key)
+            self.client = genai.Client(
+                api_key=settings.gemini_api_key,
+                http_options=types.HttpOptions(
+                    # Handle quota fallback here instead of retrying a blocked model in the SDK.
+                    retry_options=types.HttpRetryOptions(attempts=0),
+                    timeout=15000,
+                ),
+            )
         else:
             self.client = None
             logger.warning("Gemini API key is missing.")
-            
-        self.model = settings.gemini_model
 
-    async def extract_claims(self, text: str, lang: str | None = None) -> ClaimExtraction | None:
+    async def aclose(self) -> None:
+        if self.client is not None:
+            try:
+                await self.client.aio.aclose()
+            finally:
+                self.client.close()
+
+    async def _create(self, stage: str, model_usage: ModelUsage, **kwargs):
+        models = settings.available_gemini_models
+        start = models.index(model_usage.requested_model)
+        candidates = models[start:] + models[:start]
+        for model in candidates:
+            if model_pool.remaining(model):
+                model_usage.fallbacks.append(ModelFallback(stage=stage, model=model))
+                continue
+            try:
+                # Thinking configuration differs between model generations.
+                config = (
+                    {"thinking_level": "low"} if model.startswith("gemini-3") else {}
+                )
+                metrics = current_metrics.get()
+                attempt = None
+                if metrics is not None:
+                    attempt = GeminiUsage(model=model)
+                    metrics.gemini_usage.append(attempt)
+                interaction = await self.client.aio.interactions.create(
+                    model=model, generation_config=config, store=False, **kwargs
+                )
+                if attempt is not None:
+                    attempt.record(getattr(interaction, "usage", None))
+                setattr(model_usage, f"{stage}_model", model)
+                return interaction
+            except Exception as error:
+                # Interactions SDK versions use status_code/body; older SDKs use code/details.
+                if getattr(error, "status_code", getattr(error, "code", None)) != 429:
+                    raise
+                model_pool.block(model, quota_cooldown(error))
+                model_usage.fallbacks.append(ModelFallback(stage=stage, model=model))
+                logger.warning("Gemini quota reached for model %s", model)
+        raise GeminiQuotaExhausted(
+            min(model_pool.remaining(model) or 1 for model in candidates)
+        )
+
+    async def extract_claims(
+        self,
+        text: str,
+        lang: str | None = None,
+        *,
+        model_usage: ModelUsage | None = None,
+    ) -> ClaimExtraction | None:
         if not self.client:
             logger.error("Gemini API key not configured")
             return None
-        
-        start_time = time.monotonic()
-        text_len = len(text)
-        
-        prompt = f"<post>\n{text}\n</post>"
-        
-        response_format = [{
-            "type": "text",
-            "mime_type": "application/json",
-            "schema": ClaimExtraction.model_json_schema(),
-        }]
-        
-        for attempt in range(2): # 1 retry
+
+        model_usage = model_usage or ModelUsage(requested_model=settings.gemini_model)
+
+        safe_text = neutralize_marker_delimiters(text) or ""
+        prompt = f"<post>\n{safe_text}\n</post>"
+
+        response_format = [
+            {
+                "type": "text",
+                "mime_type": "application/json",
+                "schema": ClaimExtraction.model_json_schema(),
+            }
+        ]
+
+        for attempt in range(2):  # 1 retry
             try:
-                interaction = await self.client.aio.interactions.create(
-                    model=self.model,
+                interaction = await self._create(
+                    "extraction",
+                    model_usage,
                     system_instruction=EXTRACT_CLAIMS_PROMPT,
                     input=prompt,
-                    response_format=response_format
+                    response_format=response_format,
                 )
-                
+
                 raw_output = interaction.output_text
                 if raw_output:
-                    result = ClaimExtraction.model_validate_json(raw_output)
-                    
-                    elapsed = int((time.monotonic() - start_time) * 1000)
-                    logger.info(f"extract_claims done: len={text_len}, time={elapsed}ms, checkable={result.is_checkable}")
-                    
-                    return result
-            except ValidationError as e:
-                logger.warning(f"Validation error on attempt {attempt + 1}: {e}")
-            except Exception as e:
-                logger.error(f"Error in extract_claims on attempt {attempt + 1}: {e}")
-                
-        elapsed = int((time.monotonic() - start_time) * 1000)
-        logger.error(f"extract_claims failed after 2 attempts. time={elapsed}ms")
+                    return ClaimExtraction.model_validate_json(raw_output)
+            except GeminiQuotaExhausted:
+                raise
+            except ValidationError:
+                logger.warning("Validation error on attempt %s", attempt + 1)
+            except Exception:  # noqa: BLE001 - Keep degraded results without logging payloads.
+                logger.error("Error in extract_claims on attempt %s", attempt + 1)
+
+        logger.error("extract_claims failed after 2 attempts")
         return None
 
-    async def assess(self, text: str, claim: str, evidence: list[Source]) -> Assessment:
-        start_time = time.monotonic()
-        text_len = len(text)
-        
+    async def assess(
+        self,
+        text: str,
+        claim: str,
+        evidence: list[Source],
+        *,
+        model_usage: ModelUsage | None = None,
+    ) -> Assessment:
         if not self.client:
             logger.error("Gemini API key not configured")
             return Assessment(
-                verdict="unverified", 
-                confidence_score=0.0, 
-                explanation="Lỗi hệ thống: Chưa cấu hình Gemini API key.", 
+                verdict="unverified",
+                confidence_score=0.0,
+                explanation="Lỗi hệ thống: Chưa cấu hình Gemini API key.",
                 source_stances=[],
-                status="error"
+                status="error",
             )
 
+        model_usage = model_usage or ModelUsage(requested_model=settings.gemini_model)
         evidence_text = ""
         valid_urls = set()
         for i, src in enumerate(evidence):
-            evidence_text += f"Source {i+1}:\nURL: {src.url}\nTitle: {src.title}\nSnippet: {src.snippet}\n\n"
+            safe_title = neutralize_marker_delimiters(src.title)
+            safe_snippet = neutralize_marker_delimiters(src.snippet)
+            safe_claim_text = neutralize_marker_delimiters(src.claim_text)
+            evidence_text += (
+                f"Source {i + 1}:\nURL: {src.url}\nTitle: {safe_title}\nSnippet: {safe_snippet}\n"
+                f"Source tier: {source_tier(src.url)}\n"
+                f"Published date: {src.published_date or 'unknown'}\n"
+                f"Source type: {'factcheck' if src.original_stance is not None else 'tavily'}\n"
+                f"FactCheck claim: {safe_claim_text}\n"
+                f"Original stance: {src.original_stance}\n\n"
+            )
             valid_urls.add(src.url)
 
-        input_text = f"Claim to verify: {claim}\n\n<post>\n{text}\n</post>\n\nEvidence:\n{evidence_text}"
+        today = datetime.now(VIETNAM_TIMEZONE).date().isoformat()
+        safe_text = neutralize_marker_delimiters(text)
+        safe_claim = neutralize_marker_delimiters(claim)
+        input_text = (
+            f"Current date (Asia/Ho_Chi_Minh): {today}\n"
+            f"Claim to verify: {safe_claim}\n\n<post>\n{safe_text}\n</post>\n\nEvidence:\n{evidence_text}"
+        )
 
-        response_format = [{
-            "type": "text",
-            "mime_type": "application/json",
-            "schema": Assessment.model_json_schema(),
-        }]
+        response_format = [
+            {
+                "type": "text",
+                "mime_type": "application/json",
+                "schema": Assessment.model_json_schema(),
+            }
+        ]
 
         for attempt in range(2):
             try:
-                interaction = await self.client.aio.interactions.create(
-                    model=self.model,
+                interaction = await self._create(
+                    "assessment",
+                    model_usage,
                     system_instruction=ASSESS_PROMPT,
                     input=input_text,
-                    response_format=response_format
+                    response_format=response_format,
                 )
 
                 raw_output = interaction.output_text
                 if raw_output:
                     result = Assessment.model_validate_json(raw_output)
-                    
+                    result.explanation = sanitize_explanation_markers(
+                        result.explanation
+                    )
+
                     # Filter out hallucinatory URLs
-                    filtered_stances = [s for s in result.source_stances if s.url in valid_urls]
+                    filtered_stances = [
+                        s for s in result.source_stances if s.url in valid_urls
+                    ]
                     result.source_stances = filtered_stances
 
-                    elapsed = int((time.monotonic() - start_time) * 1000)
-                    logger.info(f"assess done: text_len={text_len}, time={elapsed}ms, verdict={result.verdict}")
-                    
                     return result
-            except ValidationError as e:
-                logger.warning(f"Validation error on attempt {attempt + 1}: {e}")
-            except Exception as e:
-                logger.error(f"Error in assess on attempt {attempt + 1}: {e}")
+            except GeminiQuotaExhausted:
+                raise
+            except ValidationError:
+                logger.warning("Validation error on attempt %s", attempt + 1)
+            except Exception:  # noqa: BLE001 - Keep degraded results without logging payloads.
+                logger.error("Error in assess on attempt %s", attempt + 1)
 
-        elapsed = int((time.monotonic() - start_time) * 1000)
-        logger.error(f"assess failed after 2 attempts. time={elapsed}ms")
+        logger.error("assess failed after 2 attempts")
         return Assessment(
             verdict="unverified",
             confidence_score=0.0,
             explanation="Không thể phân tích kết quả từ mô hình AI.",
             source_stances=[],
-            status="error"
+            status="error",
         )

@@ -1,0 +1,101 @@
+﻿id,label,topic,difficulty,hard_type,is_recent,date_basis,origin,verification_level,rationale,evidence_url_2
+VN26-001,false,scam,medium,scam_pattern,no,labeled_on,synthetic_false,user_file_url_not_rechecked,Đây là thủ đoạn giả mạo CSGT.,
+VN26-002,false,scam,medium,scam_pattern,no,labeled_on,synthetic_false,user_file_url_not_rechecked,Cơ quan tố tụng không yêu cầu chuyển tiền vào tài khoản chỉ định.,
+VN26-003,unverified,disaster,medium,none,no,labeled_on,synthetic_unverifiable,none_no_source,Dự báo tương lai ngoài tầm kiểm chứng tại thời điểm 16/11/2026.,
+VN26-004,true,health,medium,none,no,source_date,real_fact,search_snippet,Khớp đoạn trích Báo Tin tức/Báo Mới (4/11/2026).,
+VN26-005,mixed,scam,medium,scam_pattern,no,labeled_on,synthetic_mixed,user_file_url_not_rechecked,Vế đầu đúng; vế sau là mẹo lừa đảo phổ biến.,
+VN26-006,false,health,medium,subtle_detail,no,labeled_on,synthetic_false,user_file_url_not_rechecked,Khuyến cáo là dưới 5 gram.,
+VN26-007,true,other,hard,subtle_detail,yes,event_date,real_fact,search_snippet,Số hiệu và ngày ban hành nghị quyết khớp đoạn trích của Gia đình & Sức khỏe.,
+VN26-008,mixed,finance,hard,subtle_detail,no,source_date,synthetic_mixed,search_snippet,Ngày 15/5/2026 là ngày ban hành Thông tư 08/2026; Thông tư 25 ban hành 22/6/2026.,https://nhadautu.vn/chinh-thuc-nang-ty-le-von-ngan-han-cho-vay-trung-dai-han-len-40-tu-ngay-1-7-d105802.html
+VN26-009,true,finance,medium,none,no,labeled_on,real_fact,user_file_url_not_rechecked,Cần kiểm tra luật BHTG sửa đổi nếu có hiệu lực sau 12/2021; claim được viết theo mốc lịch sử nên vẫn đúng.,
+VN26-010,mixed,disaster,hard,subtle_detail,no,source_date,synthetic_mixed,user_file_url_not_rechecked,"Thiệt hại tập trung ở khu vực phía Bắc và Thanh Hóa, không phải phía Nam.",
+VN26-011,mixed,health,medium,subtle_detail,no,labeled_on,synthetic_mixed,user_file_url_not_rechecked,Phụ nữ mang thai nên dưới 200 mg/ngày.,
+VN26-012,true,health,medium,none,no,labeled_on,real_fact,search_snippet,VietnamPlus trích HCDC.,
+VN26-013,mixed,other,hard,subtle_detail,yes,event_date,synthetic_mixed,search_snippet,"Đúng: hai nhóm, ứng dụng đăng ký. Sai: thời gian xử lý tối đa 3 ngày.",https://soha.vn/tu-ngay-15-11-ha-noi-chinh-thuc-mien-phi-hoan-toan-mot-dich-vu-cho-hai-nhom-doi-tuong-198261115192804598.htm
+VN26-014,mixed,finance,hard,subtle_detail,yes,event_date,synthetic_mixed,search_snippet,"Giá vàng miếng đúng; giá bán vàng nhẫn thấp hơn (137,3 < 137,5).",
+VN26-015,mixed,finance,hard,contradictory_sources;stale_source,yes,event_date,synthetic_mixed,search_snippet,"Giá 11/11 đúng; mức 140,9–143,9 là giá ngày 16/10/2026. Giá 16/11 là 134,5–137,5.",https://baohatinh.vn/tv/gia-vang-hom-nay-16102026-sjc-tang-len-1409-1439-trieu-dongluong-55009.html
+VN26-016,false,finance,medium,subtle_detail,no,source_date,synthetic_false,search_snippet,Đúng là 40%.,
+VN26-017,false,finance,medium,subtle_detail,no,labeled_on,synthetic_false,user_file_url_not_rechecked,Ngưỡng đúng là trên 10 triệu/lần hoặc 20 triệu/ngày.,
+VN26-018,unverified,finance,medium,none,no,labeled_on,synthetic_unverifiable,none_no_source,"Dự đoán giá, không thể kiểm chứng.",
+VN26-019,mixed,health,medium,none,no,labeled_on,synthetic_mixed,user_file_url_not_rechecked,Miễn dịch chỉ với tuýp đã mắc; có thể mắc tối đa 4 lần.,
+VN26-020,false,other,medium,subtle_detail,yes,event_date,synthetic_false,search_snippet,"Đúng là 48 môn, 973 nội dung.",
+VN26-021,false,other,medium,subtle_detail,yes,event_date,synthetic_false,search_snippet,Chính sách chỉ áp dụng cho hai nhóm và có đăng ký qua ứng dụng.,https://baovanhoa.vn/ha-noi-mien-phi-ve-xe-buyt-metro-cho-hai-nhom-doi-tuong-tu-hom-nay.html
+VN26-022,true,health,medium,none,no,labeled_on,real_fact,user_file_url_not_rechecked,Kiến thức y khoa chuẩn.,
+VN26-023,false,finance,medium,subtle_detail,yes,event_date,synthetic_false,search_snippet,"Thực tế giảm 5 triệu, niêm yết 134,5–137,5.",https://baohatinh.vn/tv/gia-vang-hom-nay-16112026-sjc-di-ngang-o-muc-1345-1375-trieu-dongluong-57068.html
+VN26-024,unverified,disaster,medium,none,no,labeled_on,synthetic_unverifiable,none_no_source,"Sự kiện cụ thể, không có nguồn.",
+VN26-025,mixed,disaster,medium,none,yes,event_date,synthetic_mixed,search_snippet,"Vế đầu đúng; không có rét đậm, rét hại (không khí lạnh suy yếu, nhiệt độ cao nhất 29–31°C).",
+VN26-026,false,health,easy,none,no,labeled_on,synthetic_false,user_file_url_not_rechecked,Kháng sinh không có tác dụng với virus.,
+VN26-027,mixed,other,hard,subtle_detail,no,labeled_on,synthetic_mixed,user_file_url_not_rechecked,1900 là năm tròn thế kỷ không chia hết cho 400 nên không nhuận.,
+VN26-028,true,other,medium,none,no,labeled_on,real_fact,user_file_url_not_rechecked,Quy tắc lịch Gregory.,
+VN26-029,unverified,other,hard,contradictory_sources,yes,event_date,real_claim_conflicting,search_snippet,Một nguồn ghi Tuần lễ 13–19/11; các nguồn khác ghi lịch chuyến công tác của đoàn Việt Nam là 17–20/11 nên khó khẳng định.,https://baomoi.com/tong-bi-thu-chu-tich-nuoc-to-lam-se-tham-du-tuan-le-cap-cao-apec-lan-thu-33-c56499075.epi
+VN26-030,false,finance,medium,subtle_detail,yes,event_date,synthetic_false,search_snippet,Đổi một chữ số: đúng là 25.639.,
+VN26-031,true,other,easy,none,yes,event_date,real_fact,search_snippet,Khớp tiêu đề và đoạn trích.,
+VN26-032,false,finance,medium,subtle_detail,no,labeled_on,synthetic_false,user_file_url_not_rechecked,Mức đúng là 125 triệu đồng.,
+VN26-033,mixed,other,hard,subtle_detail,yes,event_date,synthetic_mixed,search_snippet,Đúng ngày và địa điểm; sai năm chủ nhà (APEC 2027).,https://vtcnews.vn/viet-nam-tham-du-tuan-le-cap-cao-apec-2026-voi-tam-the-cua-chu-nha-apec-2027-ar1051598.html
+VN26-034,mixed,scam,medium,scam_pattern,yes,event_date,synthetic_mixed,search_snippet,Vế đầu đúng theo cảnh báo; vế sau sai và nguy hiểm.,
+VN26-035,mixed,health,medium,none,no,labeled_on,synthetic_mixed,user_file_url_not_rechecked,Chỉ dùng kháng sinh khi có bằng chứng bội nhiễm vi khuẩn và có chỉ định bác sĩ.,
+VN26-036,false,scam,easy,scam_pattern,yes,event_date,synthetic_false,search_snippet,VNeID chỉ tải từ App Store/Google Play.,
+VN26-037,unverified,health,medium,none,no,labeled_on,synthetic_unverifiable,none_no_source,Không nêu nghiên cứu cụ thể; chưa có bằng chứng xác nhận.,
+VN26-038,false,disaster,medium,subtle_detail,no,labeled_on,synthetic_false,user_file_url_not_rechecked,"Tối đa 5 cấp, cấp 1 là thấp nhất.",
+VN26-039,unverified,health,hard,contradictory_sources,no,labeled_on,real_claim_conflicting,search_snippet,"Znews ghi 135.515 ca/26 tử vong, trong khi VietnamPlus ghi 170.684 ca/21 tử vong cho 10 tháng 2026. Hai báo cùng dẫn Bộ Y tế, chưa thể xác định số nào đúng.",https://www.vietnamplus.vn/chu-dong-phong-chong-sot-xuat-huyet-truoc-nguy-co-dich-lan-rong-post1147095.vnp
+VN26-040,true,other,easy,none,yes,event_date,real_fact,search_snippet,"CafeF/Báo Sống 16/11/2026 (là dự báo, không phải số đo).",
+VN26-041,false,other,medium,subtle_detail,yes,event_date,synthetic_false,search_snippet,"Địa điểm đúng là Thâm Quyến, Trung Quốc.",
+VN26-042,true,disaster,medium,none,no,labeled_on,real_fact,user_file_url_not_rechecked,Nên đối chiếu văn bản gốc trước khi dùng chính thức.,
+VN26-043,false,scam,medium,scam_pattern,yes,event_date,synthetic_false,search_snippet,Đây chính là kịch bản lừa đảo được Công an Lâm Đồng cảnh báo.,
+VN26-044,false,scam,medium,scam_pattern,yes,event_date,synthetic_false,search_snippet,Không được cung cấp mã OTP cho bất kỳ ai qua điện thoại.,
+VN26-045,true,scam,medium,scam_pattern,no,labeled_on,real_fact,user_file_url_not_rechecked,Cảnh báo của Bộ Công an về SMS phạt nguội giả mạo.,
+VN26-046,mixed,scam,medium,scam_pattern,no,labeled_on,synthetic_mixed,user_file_url_not_rechecked,Vế đầu đúng; vế sau bịa đặt để tạo áp lực.,
+VN26-047,mixed,other,hard,subtle_detail,no,labeled_on,synthetic_mixed,search_snippet,Đúng mốc thời gian; sai phần áp dụng cho xe buýt du lịch (bị loại trừ).,https://vneconomy.vn/ha-noi-ho-tro-chuyen-doi-phuong-tien-nang-luong-sach-mien-ve-xe-buyt-trong-vanh-dai-1.htm
+VN26-048,mixed,other,hard,subtle_detail,yes,event_date,synthetic_mixed,search_snippet,Đúng đơn vị tổ chức; mốc thành lập là 1076 (1076–2026).,
+VN26-049,true,other,medium,none,yes,event_date,real_fact,search_snippet,"Báo Tin tức, bản tổng hợp 24h ngày 16/11/2026.",
+VN26-050,false,disaster,medium,subtle_detail,yes,event_date,synthetic_false,search_snippet,"Thực tế khoảng 100 m dài, 20 cm rộng, sâu 3–5 m.",
+VN26-051,unverified,scam,hard,scam_pattern,no,labeled_on,synthetic_unverifiable,none_no_source,"Thống kê không nêu tên ngân hàng, không có nguồn.",
+VN26-052,false,finance,medium,subtle_detail,no,effective_date,synthetic_false,search_snippet,Có hiệu lực từ 1/7/2026.,
+VN26-053,true,finance,medium,none,yes,event_date,real_fact,search_snippet,Khớp Ngôi Sao và Báo Hà Tĩnh cập nhật ngày 16/11/2026.,https://baohatinh.vn/tv/gia-vang-hom-nay-16112026-sjc-di-ngang-o-muc-1345-1375-trieu-dongluong-57068.html
+VN26-054,false,health,easy,none,no,labeled_on,synthetic_false,user_file_url_not_rechecked,Bệnh lây qua muỗi vằn.,
+VN26-055,true,finance,medium,none,no,labeled_on,real_fact,user_file_url_not_rechecked,Quy định nổi tiếng; URL từ dataset của bạn.,
+VN26-056,false,health,medium,subtle_detail,no,labeled_on,synthetic_false,search_snippet,"Thực tế là tăng 16,2%.",
+VN26-057,mixed,disaster,hard,subtle_detail,yes,event_date,synthetic_mixed,search_snippet,Đúng phần nguyên nhân và tình huống khẩn cấp; sai phần cấm toàn bộ xe (xe vẫn lưu thông theo điều tiết).,https://baomoi.com/khan-truong-xu-ly-diem-sut-lun-tren-quoc-lo-4d-c56525857.epi
+VN26-058,mixed,finance,hard,subtle_detail,no,labeled_on,synthetic_mixed,user_file_url_not_rechecked,Giao dịch dưới ngưỡng chỉ cần OTP.,
+VN26-059,true,health,medium,none,no,labeled_on,real_fact,user_file_url_not_rechecked,Khuyến nghị WHO.,
+VN26-060,mixed,other,medium,subtle_detail,yes,event_date,synthetic_mixed,search_snippet,Đúng sự kiện; người phát biểu là Tổng thống Lee Jae Myung.,
+VN26-061,true,disaster,medium,none,no,source_date,real_fact,user_file_url_not_rechecked,Theo nội dung bài Chính phủ trong dataset của bạn.,
+VN26-062,true,other,hard,contradictory_sources,yes,event_date,real_fact,search_snippet,TTXVN đăng 13/11 20:39 'Tối 13/11/2026'. Một số tin trước đó ghi dự kiến 19h30 14/11 nên dễ gây nhầm.,https://baolaocai.vn/chuoi-hoat-dong-ky-niem-950-nam-thanh-lap-quoc-tu-giam-post894758.html
+VN26-063,true,other,medium,none,yes,event_date,real_fact,search_snippet,TTXVN/Chính phủ; VTC xác nhận phần chủ nhà APEC 2027.,https://vtcnews.vn/viet-nam-tham-du-tuan-le-cap-cao-apec-2026-voi-tam-the-cua-chu-nha-apec-2027-ar1051598.html
+VN26-064,mixed,scam,medium,scam_pattern,no,labeled_on,synthetic_mixed,user_file_url_not_rechecked,Vế đầu đúng; vế sau sai (bị chiếm đoạt).,
+VN26-065,mixed,other,medium,none,no,labeled_on,synthetic_mixed,user_file_url_not_rechecked,Núi cao nước sôi ở nhiệt độ thấp hơn nên thức ăn lâu chín hơn.,
+VN26-066,true,health,easy,none,no,labeled_on,real_fact,user_file_url_not_rechecked,Kiến thức y khoa chuẩn.,
+VN26-067,mixed,disaster,medium,none,no,labeled_on,synthetic_mixed,user_file_url_not_rechecked,Vế đầu đúng; khi vào bờ nông sóng cao lên và có thể gây ngập sâu.,
+VN26-068,false,scam,medium,scam_pattern,no,labeled_on,synthetic_false,user_file_url_not_rechecked,"Báo Nhân Dân cảnh báo đây là thủ đoạn lừa đảo, có thể bị xử lý hình sự.",
+VN26-069,unverified,finance,medium,none,no,labeled_on,synthetic_unverifiable,none_no_source,"Thông tin dự kiến, không nêu tên ngân hàng và không có nguồn.",
+VN26-070,true,health,easy,none,no,labeled_on,real_fact,user_file_url_not_rechecked,Khuyến cáo WHO.,
+VN26-071,true,other,medium,none,yes,event_date,real_fact,search_snippet,"Khớp tiêu đề/đoạn trích của TTXVN, Báo Văn Hóa, Chính phủ.",https://baovanhoa.vn/ha-noi-mien-phi-ve-xe-buyt-metro-cho-hai-nhom-doi-tuong-tu-hom-nay.html
+VN26-072,unverified,scam,hard,scam_pattern,no,labeled_on,synthetic_unverifiable,none_no_source,Không tìm thấy nguồn; chưa thể bác bỏ hay xác nhận.,
+VN26-073,mixed,finance,hard,subtle_detail,yes,event_date,synthetic_mixed,search_snippet,"Tỷ giá trung tâm đúng; Vietcombank bị đảo chiều mua/bán (mua 25.500, bán 25.910).",
+VN26-074,unverified,finance,hard,none,no,labeled_on,synthetic_unverifiable,none_no_source,"Tin đồn; chỉ có nguồn xác nhận biên độ hiện hành ±5%, không có nguồn về việc xem xét nới.",
+VN26-075,false,other,easy,none,no,labeled_on,synthetic_false,user_file_url_not_rechecked,Không thể nhìn thấy từ Mặt Trăng.,
+VN26-076,unverified,scam,hard,scam_pattern,no,labeled_on,synthetic_unverifiable,none_no_source,Đúng kịch bản lừa đảo quen thuộc nhưng không có nguồn xác nhận sự việc cụ thể.,
+VN26-077,true,other,easy,none,no,labeled_on,real_fact,user_file_url_not_rechecked,Kiến thức khoa học phổ biến.,
+VN26-078,mixed,finance,hard,subtle_detail;contradictory_sources,no,effective_date,synthetic_mixed,search_snippet,"Đúng hiệu lực; mức phạt tối đa là 50 triệu, một số hành vi lên 50–70 triệu theo Điều 95.",https://vov.vn/phap-luat/tu-17-chia-se-thong-tin-sai-su-that-tren-mang-xa-hoi-bi-phat-den-50-trieu-dong-post1293826.vov
+VN26-079,mixed,finance,medium,none,no,labeled_on,synthetic_mixed,user_file_url_not_rechecked,"CPI giảm nghĩa là lạm phát giảm hoặc giảm phát, không phải tăng.",
+VN26-080,mixed,health,hard,subtle_detail,no,labeled_on,synthetic_mixed,search_snippet,Đúng hội nghị và quy mô; phần đưa vaccine vào tiêm chủng mở rộng là bịa (hiện mới có nghiên cứu lâm sàng MOBILIZE-1).,https://znews.vn/can-benh-quen-thuoc-nay-tro-nen-nguy-hiem-o-tphcm-va-nam-bo-post1600745.html
+VN26-081,mixed,scam,medium,scam_pattern,yes,event_date,synthetic_mixed,search_snippet,Vế đầu đúng; vế sau sai (đầu số có thể bị giả mạo).,
+VN26-082,true,finance,easy,none,no,labeled_on,real_fact,user_file_url_not_rechecked,Kiến thức kinh tế chuẩn.,
+VN26-083,true,other,easy,none,no,labeled_on,real_fact,user_file_url_not_rechecked,Nguồn là trang hỏi đáp học sinh (độ tin cậy trung bình); kiến thức đúng.,
+VN26-084,unverified,health,medium,none,no,labeled_on,synthetic_unverifiable,none_no_source,"Sự kiện cục bộ, không có nguồn; URL chỉ là ngữ cảnh chủ đề.",
+VN26-085,unverified,other,medium,none,no,labeled_on,synthetic_unverifiable,none_no_source,Không có nguồn xác nhận.,
+VN26-086,true,disaster,medium,none,yes,event_date,real_fact,search_snippet,VnExpress 15/11/2026; TTXVN 16/11 xác nhận sự cố.,https://baotintuc.vn/khan-truong-xu-ly-diem-sut-lun-nut-nen-duong-tren-quoc-lo-4d-post1403153.html
+VN26-087,false,finance,hard,contradictory_sources;stale_source,yes,event_date,synthetic_false,search_snippet,"Con số này lấy từ bài đăng 16/11 của năm khác (vẫn xuất hiện trong kết quả tìm kiếm); giá thực ngày 16/11/2026 là 134,5–137,5.",https://baohatinh.vn/tv/gia-vang-hom-nay-16112026-sjc-di-ngang-o-muc-1345-1375-trieu-dongluong-57068.html
+VN26-088,mixed,health,medium,none,no,labeled_on,synthetic_mixed,user_file_url_not_rechecked,"Vế đầu đúng; vaccine cúm tiêm là vaccine bất hoạt, không chứa virus sống.",
+VN26-089,true,scam,medium,scam_pattern,yes,event_date,real_fact,search_snippet,Đã đọc toàn văn bài Phụ Nữ Today 13/11/2026.,
+VN26-090,mixed,finance,hard,subtle_detail,no,labeled_on,synthetic_mixed,user_file_url_not_rechecked,Chỉ áp dụng cho tiền gửi bằng VND.,
+VN26-091,unverified,health,hard,contradictory_sources,no,labeled_on,real_claim_conflicting,search_snippet,Mâu thuẫn với số liệu Znews (135.515 ca/26 tử vong); chưa thể kết luận.,https://znews.vn/can-benh-quen-thuoc-nay-tro-nen-nguy-hiem-o-tphcm-va-nam-bo-post1600745.html
+VN26-092,true,finance,medium,none,no,source_date,real_fact,search_snippet,"Nhiều nguồn (Nhà Đầu Tư, LuatVietnam, Thời báo Tài chính) thống nhất.",https://thoibaotaichinhvietnam.vn/chinh-thuc-nang-ty-le-von-ngan-han-cho-vay-trung-dai-han-len-40-sau-nhieu-nam-siet-chat-199482.html
+VN26-093,true,scam,easy,scam_pattern,no,labeled_on,real_fact,user_file_url_not_rechecked,Cảnh báo chính thức của Bộ Công an.,
+VN26-094,true,other,medium,none,no,labeled_on,real_fact,user_file_url_not_rechecked,Kiến thức địa chất chuẩn.,
+VN26-095,false,other,hard,subtle_detail;contradictory_sources,yes,event_date,synthetic_false,search_snippet,Sai ngày: TTXVN ghi tối 13/11/2026. Lịch dự kiến ban đầu ghi 14/11 nên dễ nhầm.,https://baolaocai.vn/chuoi-hoat-dong-ky-niem-950-nam-thanh-lap-quoc-tu-giam-post894758.html
+VN26-096,false,disaster,medium,none,yes,event_date,synthetic_false,search_snippet,"Nguyên nhân là mưa lớn kéo dài gây cung trượt, không phải động đất.",https://baotintuc.vn/khan-truong-xu-ly-diem-sut-lun-nut-nen-duong-tren-quoc-lo-4d-post1403153.html
+VN26-097,unverified,health,hard,none,no,labeled_on,synthetic_unverifiable,none_no_source,Hợp lý về mặt y khoa nhưng không có nguồn.,
+VN26-098,true,finance,medium,none,yes,event_date,real_fact,search_snippet,"VOV: 25.639, phiên trước 25.637. Lưu ý bài VOV có câu chữ 'tăng/xuống' tự mâu thuẫn nhưng số liệu nhất quán.",
+VN26-099,true,finance,medium,none,no,effective_date,real_fact,search_snippet,Nhiều báo thống nhất. Lưu ý một số hành vi cụ thể có khung phạt khác (xem mẫu mixed/CS).,
+VN26-100,mixed,other,hard,subtle_detail,no,labeled_on,synthetic_mixed,user_file_url_not_rechecked,Vế đầu đúng; Dương Lợi Vĩ nói ông không nhìn thấy (cần đối chiếu bài gốc trước khi dùng chính thức).,

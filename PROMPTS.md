@@ -1,7 +1,8 @@
 # PROMPTS.md — Kế hoạch đầu việc & prompt cho AI
 
-> Cách dùng: làm **tuần tự** từ T0 → T15. Mỗi task = 1 phiên chat mới với AI + 1 commit khi chạy được.
-> Mỗi prompt đã gồm: bối cảnh, yêu cầu, tiêu chí hoàn thành, điều không được làm.
+> T0–T13 ghi lại các prompt phát triển ban đầu. Khi làm việc trên mã hiện tại, dùng cấu trúc và luồng trong [ARCHITECTURE.md](ARCHITECTURE.md), [hướng dẫn extension](extension/README.md) và [hướng dẫn backend](backend/README.md). Xem [ROADMAP.md](ROADMAP.md) để theo dõi các hạng mục tiếp theo.
+
+> Mỗi prompt ghi lại bối cảnh, yêu cầu và tiêu chí hoàn thành của một task. Các prompt scaffold và mock áp dụng cho giai đoạn khởi tạo.
 
 ## Quy ước chung
 
@@ -18,17 +19,22 @@ Với API/SDK bên ngoài (Gemini, Tavily, Google Fact Check, Chrome APIs):
 tra tài liệu chính thức mới nhất, không dựa vào trí nhớ về tên model/endpoint/tham số.
 ```
 
-**Hợp đồng dữ liệu (chốt ngay từ T1, mọi task sau bám theo):**
+**Hợp đồng API hiện tại**
 
 ```text
 AnalyzeRequest:  { text: str (20–2000 ký tự), platform: "facebook"|"x"|"reddit",
-                   page_url?: str, lang?: str }
+                   page_url?: str, lang?: str, model_id?: str }
 AnalyzeResponse: { verdict: "likely_true"|"likely_false"|"mixed"|"unverified",
                    confidence_score: float 0..1,
                    explanation: str,
                    sources: [{ title, url, publisher?, snippet?, stance?: "supports"|"refutes"|"neutral" }],
-                   service_status: { factcheck: "ok"|"error"|"empty", tavily: ..., gemini: ... } }
+                   service_status: { factcheck: "ok"|"error"|"empty", tavily: ..., gemini: ... },
+                   model_usage: null | { requested_model: str, extraction_model: str|null,
+                     assessment_model: str|null, fallbacks: [{ stage, model, reason }] } }
+ModelCatalog:    { default_model: str, models: str[] }
 ```
+
+`GET /api/v1/models` trả `ModelCatalog`. `POST /api/v1/analyze` dùng `model_id` đã bật hoặc model mặc định khi bỏ qua trường này. Hai endpoint dùng `X-API-Key`. Backend trả `503` cùng `Retry-After` khi mọi model Gemini đang chạm hạn mức. Xem [schema request](backend/app/schemas/request.py) và [schema response](backend/app/schemas/response.py) khi thay đổi hợp đồng.
 
 **Bản đồ tổng:**
 
@@ -66,7 +72,7 @@ Yêu cầu:
 - Theo đúng cấu trúc thư mục trong ARCHITECTURE.md mục 2.2
   (app/main.py, api/v1/analyze.py, core/config.py, core/logging.py, schemas/, services/, orchestrator/).
   Các thư mục services/ và orchestrator/ chỉ tạo khung rỗng (__init__.py).
-- schemas/request.py và schemas/response.py theo "Hợp đồng dữ liệu" trong PROMPTS.md,
+- schemas/request.py và schemas/response.py theo hợp đồng phân tích ban đầu,
   có validate độ dài text 20–2000 ký tự.
 - POST /api/v1/analyze: hiện tại trả về DỮ LIỆU MOCK cố định đúng schema AnalyzeResponse.
 - GET /health trả {"status":"ok"}.
@@ -100,9 +106,11 @@ Yêu cầu:
   + host_permissions chỉ: https://*.facebook.com/* và URL backend (đọc từ biến build)
   + content_scripts match: https://*.facebook.com/*
   + background service worker, side_panel default_path
-- Cấu trúc: content-script/, background/, sidepanel/, shared/ (theo ARCHITECTURE.md 2.1).
-- shared/types.ts: định nghĩa AnalyzeRequest/AnalyzeResponse khớp hợp đồng dữ liệu,
-  và các kiểu message giữa content script ↔ background ↔ side panel.
+- Cấu trúc hiện tại: src/entrypoints/, src/features/analysis/, src/infrastructure/, src/shared/
+  (theo ARCHITECTURE.md 2.1). Entrypoint chỉ khởi tạo và đăng ký listener.
+- features/analysis/types.ts: định nghĩa request, response, trạng thái theo tab.
+- shared/messages.ts: hợp đồng message giữa content script ↔ background ↔ side panel;
+  dùng import type cho dữ liệu của tính năng.
 - Mỗi phần chỉ cần "hello world": content script log ra console, side panel hiện chữ tĩnh.
 - Script: npm run dev (watch), npm run build (ra dist/), npm run lint, npm run typecheck.
 - ESLint + Prettier.
@@ -128,7 +136,7 @@ Commit: `feat(extension): scaffold MV3 + build pipeline`
 [TASK T3] Content script bắt sự kiện bôi đen và hiển thị nút nổi.
 
 Yêu cầu:
-- Định nghĩa interface PlatformAdapter trong shared/ hoặc content-script/adapters/:
+- Định nghĩa interface PlatformAdapter trong src/features/analysis/content/adapters/platform-adapter.ts:
   { id: string; matches(url: URL): boolean; getSelectionInfo(): SelectionInfo | null }
   với SelectionInfo = { text: string; rect: DOMRect }.
 - Viết facebook-adapter.ts implement interface đó.
@@ -141,7 +149,7 @@ Yêu cầu:
 - Bấm nút → gửi message { type: "ANALYZE_REQUEST", payload: {text, platform:"facebook", page_url} }
   tới background bằng chrome.runtime.sendMessage (background chưa xử lý cũng được, log ra).
 - Text trong selection KHÔNG được lưu ở đâu hay log ra console trong bản build production.
-- Có registry adapter đơn giản: chọn adapter theo URL (để sau thêm x/reddit).
+- Có registry adapter đơn giản: chọn adapter theo URL trong features/analysis/content/adapters/index.ts.
 
 Tiêu chí hoàn thành:
 - Bôi đen đoạn văn trong bài post → nút hiện đúng vị trí, không vỡ layout Facebook.
@@ -174,7 +182,7 @@ Yêu cầu:
   success (verdict badge, thanh confidence, explanation, danh sách nguồn),
   error (thông báo thân thiện + nút "Thử lại").
 - Ở task này background trả DỮ LIỆU MOCK sau 1.5 giây delay để thử UI. Tách mock ra file riêng
-  (shared/mock.ts) để dễ xoá.
+  (features/analysis/background/mock.ts) để dễ xoá; không đưa mock vào infrastructure.
 - UI: tiếng Việt, gọn, hỗ trợ dark/light theo hệ thống. Chọn vanilla TS hoặc Preact
   (giải thích ngắn), bundle phải nhẹ.
 - Link nguồn: target="_blank" rel="noopener noreferrer"; render text bằng textContent

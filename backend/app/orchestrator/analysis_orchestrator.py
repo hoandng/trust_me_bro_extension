@@ -1,43 +1,109 @@
 import asyncio
-from typing import List
+import logging
+from contextlib import contextmanager
 
+from app.core.config import MAX_SEARCH_QUERIES, settings
+from app.core.metrics import current_metrics
+from app.core.source_ranking import rank_sources
 from app.schemas.internal import AnalysisContext
-from app.schemas.response import AnalyzeResponse, ServiceStatus, Source
-from app.services.base_service import BaseService
+from app.schemas.response import AnalyzeResponse, ModelUsage, ServiceStatus, Source
+from app.services.gemini_model_pool import GeminiQuotaExhausted
+
+logger = logging.getLogger(__name__)
+TIMEOUT_EXPLANATION = (
+    "Đã hết thời gian phân tích. Chưa đủ cơ sở để xác minh thông tin này."
+)
+
+
+class _AnalysisTiming:
+    def __init__(self):
+        self.clock = asyncio.get_running_loop().time
+        self.started = self.clock()
+        self.deadline = self.started + settings.analysis_timeout_seconds
+        self.metadata = {
+            "extract_ms": None,
+            "evidence_ms": None,
+            "assess_ms": None,
+            "timeout_stage": None,
+        }
+
+    @contextmanager
+    def stage(self, name: str):
+        started = self.clock()
+        try:
+            yield
+        except TimeoutError:
+            self.metadata["timeout_stage"] = name
+            raise
+        finally:
+            self.metadata[f"{name}_ms"] = round((self.clock() - started) * 1000)
+
+    def finish(self, model_usage: ModelUsage):
+        total_ms = round((self.clock() - self.started) * 1000)
+        if (metrics := current_metrics.get()) is not None:
+            metrics.extract_ms = self.metadata["extract_ms"]
+            metrics.evidence_ms = self.metadata["evidence_ms"]
+            metrics.assess_ms = self.metadata["assess_ms"]
+            metrics.total_ms = total_ms
+            metrics.timed_out = self.metadata["timeout_stage"] is not None
+            metrics.extraction_model = model_usage.extraction_model
+            metrics.assessment_model = model_usage.assessment_model
+        logger.info(
+            "analysis_timing",
+            extra={
+                **self.metadata,
+                "total_ms": total_ms,
+            },
+        )
+
 
 class AnalysisOrchestrator:
-    def __init__(
-        self,
-        gemini_service,
-        factcheck_service,
-        tavily_service
-    ):
+    def __init__(self, gemini_service, factcheck_service, tavily_service):
         self.gemini_service = gemini_service
         self.factcheck_service = factcheck_service
         self.tavily_service = tavily_service
 
-    async def analyze(self, ctx: AnalysisContext) -> AnalyzeResponse:
+    async def analyze(
+        self, ctx: AnalysisContext, *, model_id: str | None = None
+    ) -> AnalyzeResponse:
+        timing = _AnalysisTiming()
+        model_usage = ModelUsage(requested_model=model_id or settings.gemini_model)
+        try:
+            response = await self._analyze(ctx, model_usage, timing)
+            response.model_usage = model_usage
+            return response
+        finally:
+            timing.finish(model_usage)
+
+    async def _analyze(
+        self, ctx: AnalysisContext, model_usage: ModelUsage, timing: _AnalysisTiming
+    ) -> AnalyzeResponse:
         # Initial status
-        status_dict = {
-            "factcheck": "empty",
-            "tavily": "empty",
-            "gemini": "ok"
-        }
+        status_dict = {"factcheck": "empty", "tavily": "empty", "gemini": "ok"}
 
         # Stage 0: Extract Claims
         try:
-            extraction = await asyncio.wait_for(
-                self.gemini_service.extract_claims(ctx.text, ctx.lang),
-                timeout=10.0
-            )
-        except Exception as e:
+            with timing.stage("extract"):
+                async with asyncio.timeout_at(
+                    min(timing.deadline, timing.clock() + 20)
+                ):
+                    extraction = await self.gemini_service.extract_claims(
+                        ctx.text, ctx.lang, model_usage=model_usage
+                    )
+        except GeminiQuotaExhausted:
+            raise
+        except Exception:  # noqa: BLE001 - Keep degraded results without logging payloads.
             status_dict["gemini"] = "error"
             return AnalyzeResponse(
                 verdict="unverified",
                 confidence_score=0.0,
-                explanation="Lỗi khi phân tích nội dung. Không thể trích xuất thông tin.",
+                explanation=(
+                    TIMEOUT_EXPLANATION
+                    if timing.metadata["timeout_stage"] == "extract"
+                    else "Lỗi khi phân tích nội dung. Không thể trích xuất thông tin."
+                ),
                 sources=[],
-                service_status=ServiceStatus(**status_dict)
+                service_status=ServiceStatus(**status_dict),
             )
 
         if not extraction:
@@ -47,7 +113,7 @@ class AnalysisOrchestrator:
                 confidence_score=0.0,
                 explanation="Không thể phân tích văn bản do lỗi dịch vụ.",
                 sources=[],
-                service_status=ServiceStatus(**status_dict)
+                service_status=ServiceStatus(**status_dict),
             )
 
         if not extraction.is_checkable:
@@ -56,7 +122,7 @@ class AnalysisOrchestrator:
                 confidence_score=0.0,
                 explanation="Nội dung là ý kiến cá nhân, câu hỏi hoặc không chứa thông tin có thể kiểm chứng được.",
                 sources=[],
-                service_status=ServiceStatus(**status_dict)
+                service_status=ServiceStatus(**status_dict),
             )
 
         # Update ctx with extraction results
@@ -64,58 +130,79 @@ class AnalysisOrchestrator:
         ctx.search_queries = extraction.search_queries
         ctx.lang = extraction.detected_lang
 
-        # Stage 1: FactCheck + Tavily concurrently
-        tasks = [
-            self.factcheck_service.check(ctx),
-            self.tavily_service.check(ctx)
-        ]
-        
-        try:
-            # Overall timeout for Stage 1 & 2 is around 15s (25s total)
-            results = await asyncio.wait_for(
-                asyncio.gather(*tasks, return_exceptions=True),
-                timeout=15.0
+        # Tối đa hai query, hai provider và một fallback cho mỗi cặp.
+        query_limit = min(settings.search_query_limit, MAX_SEARCH_QUERIES)
+        queries = dict.fromkeys(
+            query.strip()
+            for query in extraction.search_queries[:query_limit]
+            if query.strip()
+        )
+        if not queries and (claim := extraction.main_claim.strip()):
+            queries[claim] = None
+
+        providers = {"factcheck": self.factcheck_service, "tavily": self.tavily_service}
+        sources_by_provider: dict[str, list[Source]] = {name: [] for name in providers}
+        with timing.stage("evidence"):
+            remaining = timing.deadline - timing.clock()
+            jobs = (
+                [
+                    (
+                        name,
+                        asyncio.create_task(
+                            service.check(
+                                ctx.model_copy(update={"search_queries": [query]})
+                            )
+                        ),
+                    )
+                    for name, service in providers.items()
+                    for query in queries
+                ]
+                if remaining > 0
+                else []
             )
-        except asyncio.TimeoutError:
-            results = [Exception("Timeout"), Exception("Timeout")]
-
-        all_sources = []
-        factcheck_res = None
-        tavily_res = None
-
-        # Extract results
-        for i, service_name in enumerate(["factcheck", "tavily"]):
-            res = results[i]
-            if isinstance(res, Exception):
-                status_dict[service_name] = "error"
+            if jobs:
+                tasks = [task for _, task in jobs]
+                try:
+                    _, pending = await asyncio.wait(tasks, timeout=min(remaining, 15.0))
+                    if pending:
+                        timing.metadata["timeout_stage"] = "evidence"
+                finally:
+                    for task in tasks:
+                        if not task.done():
+                            task.cancel()
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
             else:
-                status_dict[service_name] = res.status
-                if res.sources:
-                    all_sources.extend(res.sources)
-                if service_name == "factcheck":
-                    factcheck_res = res
-                else:
-                    tavily_res = res
+                results = []
 
-        # Sort sources: factcheck first, then remove duplicate URLs, max 8
-        unique_urls = set()
-        sorted_sources = []
-        
-        # Add factcheck sources first
-        if factcheck_res and factcheck_res.sources:
-            for s in factcheck_res.sources:
-                if s.url not in unique_urls:
-                    unique_urls.add(s.url)
-                    sorted_sources.append(s)
-                    
-        # Add tavily sources next
-        if tavily_res and tavily_res.sources:
-            for s in tavily_res.sources:
-                if s.url not in unique_urls:
-                    unique_urls.add(s.url)
-                    sorted_sources.append(s)
+        for (name, _), result in zip(jobs, results, strict=True):
+            if isinstance(result, BaseException):
+                status_dict[name] = "error"
+                continue
+            sources_by_provider[name].extend(result.sources)
+            if result.status == "error" or status_dict[name] == "empty":
+                status_dict[name] = result.status
 
-        sorted_sources = sorted_sources[:8]
+        factcheck_sources = sources_by_provider["factcheck"]
+        tavily_sources = sources_by_provider["tavily"]
+        unique_sources = {}
+        for source in (*factcheck_sources, *tavily_sources):
+            unique_sources.setdefault(source.url, source)
+        sorted_sources = [
+            source.model_copy(deep=True)
+            for source in rank_sources(list(unique_sources.values()))[:8]
+        ]
+
+        if timing.clock() >= timing.deadline:
+            timing.metadata["timeout_stage"] = "evidence"
+            if sorted_sources:
+                status_dict["gemini"] = "error"
+            return AnalyzeResponse(
+                verdict="unverified",
+                confidence_score=0.0,
+                explanation=TIMEOUT_EXPLANATION,
+                sources=sorted_sources,
+                service_status=ServiceStatus(**status_dict),
+            )
 
         # If both FactCheck and Tavily are empty/error
         if not sorted_sources:
@@ -124,40 +211,70 @@ class AnalysisOrchestrator:
                 confidence_score=0.3,
                 explanation="Không tìm thấy đủ bằng chứng để xác minh thông tin này.",
                 sources=[],
-                service_status=ServiceStatus(**status_dict)
+                service_status=ServiceStatus(**status_dict),
             )
 
         # Stage 2: Gemini Assess
         try:
-            assessment = await asyncio.wait_for(
-                self.gemini_service.assess(ctx.text, ctx.claim, sorted_sources),
-                timeout=10.0
-            )
-        except Exception:
+            with timing.stage("assess"):
+                async with asyncio.timeout_at(
+                    min(timing.deadline, timing.clock() + 20)
+                ):
+                    assessment = await self.gemini_service.assess(
+                        ctx.text, ctx.claim, sorted_sources, model_usage=model_usage
+                    )
+        except GeminiQuotaExhausted:
+            raise
+        except Exception:  # noqa: BLE001 - Keep degraded results without logging payloads.
             status_dict["gemini"] = "error"
             return AnalyzeResponse(
                 verdict="unverified",
                 confidence_score=0.0,
-                explanation="Lỗi khi đánh giá bằng chứng thu thập được.",
+                explanation=(
+                    TIMEOUT_EXPLANATION
+                    if timing.metadata["timeout_stage"] == "assess"
+                    else "Lỗi khi đánh giá bằng chứng thu thập được."
+                ),
                 sources=sorted_sources,
-                service_status=ServiceStatus(**status_dict)
+                service_status=ServiceStatus(**status_dict),
             )
 
         if assessment.status == "error":
             status_dict["gemini"] = "error"
 
+        factcheck_urls = {s.url for s in factcheck_sources}
+        tavily_urls = {s.url for s in tavily_sources}
+        if assessment.source_stances:
+            stance_map = {st.url: st.stance for st in assessment.source_stances}
+            for s in sorted_sources:
+                if (
+                    s.url in tavily_urls
+                    and s.url not in factcheck_urls
+                    and s.url in stance_map
+                ):
+                    s.stance = stance_map[s.url]
+
         # Rule: If FactCheck has clear results, prioritize it
         verdict = assessment.verdict
         confidence_score = assessment.confidence_score
-        
+
         factcheck_clear_supports = False
         factcheck_clear_refutes = False
-        
-        if factcheck_res and factcheck_res.sources:
-            for s in factcheck_res.sources[:1]: # Check top factcheck
-                if s.stance == "supports":
+
+        match_map = {st.url: st.factcheck_match for st in assessment.source_stances}
+        if assessment.status != "error":
+            assessed_urls = {s.url for s in sorted_sources}
+            for s in factcheck_sources[:1]:
+                if (
+                    s.url not in assessed_urls
+                    or not s.claim_text
+                    or not s.claim_text.strip()
+                    or match_map.get(s.url) is not True
+                ):
+                    continue
+                if s.original_stance == "supports":
                     factcheck_clear_supports = True
-                elif s.stance == "refutes":
+                elif s.original_stance == "refutes":
                     factcheck_clear_refutes = True
 
         if factcheck_clear_supports and verdict != "likely_true":
@@ -178,5 +295,5 @@ class AnalysisOrchestrator:
             confidence_score=confidence_score,
             explanation=assessment.explanation,
             sources=sorted_sources,
-            service_status=ServiceStatus(**status_dict)
+            service_status=ServiceStatus(**status_dict),
         )
