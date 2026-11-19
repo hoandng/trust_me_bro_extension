@@ -2,15 +2,15 @@
 
 Hướng dẫn chạy script `scripts/benchmark/run_benchmark.py` để so sánh độ chính xác, chi phí và độ trễ giữa 3 chế độ kiểm chứng.
 
-Cập nhật theo commit `b00372f`, 19/11/2026.
+Cập nhật:19/11/2026.
 
 ## Các chế độ so sánh
 
-| Chế độ | Luồng xử lý |
-|---|---|
-| `llm_only` | Gemini đánh giá trực tiếp bằng `LLM_ONLY_PROMPT`, không dùng công cụ tìm kiếm |
+| Chế độ          | Luồng xử lý                                                                                   |
+| --------------- | --------------------------------------------------------------------------------------------- |
+| `llm_only`      | Gemini đánh giá trực tiếp bằng `LLM_ONLY_PROMPT`, không dùng công cụ tìm kiếm                 |
 | `llm_factcheck` | `AnalysisOrchestrator` chạy Gemini + Google Fact Check (thay Tavily bằng `NullTavilyService`) |
-| `full` | Pipeline đầy đủ: Gemini + Google Fact Check + Tavily Search |
+| `full`          | Pipeline đầy đủ: Gemini + Google Fact Check + Tavily Search                                   |
 
 ## Cách chạy
 
@@ -28,6 +28,7 @@ python scripts/benchmark/run_benchmark.py --dataset scripts/benchmark/dataset_vn
 ```
 
 Các tùy chọn chính (`python scripts/benchmark/run_benchmark.py --help`):
+
 - `--dataset`: đường dẫn CSV dataset (mặc định `scripts/benchmark/dataset_vn_benchmark_100.csv`, fallback `dataset.csv`).
 - `--annotations`: file CSV annotation tùy chọn (tự nạp `<stem>_annotations.csv` nếu tồn tại).
 - `--modes`: chọn tập con trong `llm_only`, `llm_factcheck`, `full`; `--limit`, `--repeats`, `--model`, `--allow-fallback`.
@@ -40,6 +41,7 @@ Các tùy chọn chính (`python scripts/benchmark/run_benchmark.py --help`):
 ## Kết quả đầu ra
 
 Mỗi lần chạy tạo thư mục `scripts/benchmark/results/<tên_dataset>_<DD-MM-YYYY>_<HH-MM-SS>/` theo giờ `Asia/Ho_Chi_Minh` gồm 4 file:
+
 - `report.md`: bảng Macro-F1 (95% Bootstrap CI), Accuracy, lỗi nghiêm trọng, tỷ lệ `unverified`, chi phí, p50/p95, kiểm định McNemar, phân rã thời gian từng bước và ma trận nhầm lẫn.
 - `raw.csv`: kết quả chi tiết từng cặp mẫu × chế độ.
 - `chart.png`: biểu đồ Macro-F1 theo chi phí (sinh khi `matplotlib` khả dụng).

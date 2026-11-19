@@ -67,4 +67,4 @@ Tuân thủ ranh giới lớp `entrypoints/ → features/ → infrastructure/` �
 
 - Tạo nhánh làm việc riêng từ `main` và mở Pull Request vào `main` để CI kiểm tra.
 - Dùng tiền tố Conventional Commits ngắn gọn: `feat`, `fix`, `refactor`, `test`, `docs`, `chore` kèm phạm vi tùy chọn (ví dụ `feat(backend): ...`, `fix(extension): ...`, `docs: ...`).
-- Khi thay đổi hành vi API, cấu hình hoặc trạng thái tính năng, cập nhật tài liệu sở hữu tương ứng theo [ROADMAP.md](ROADMAP.md) và [ARCHITECTURE.md](ARCHITECTURE.md).
+- Khi thay đổi hành vi API, cấu hình hoặc trạng thái tính năng, cập nhật tài liệu sở hữu tương ứng trong cùng commit ([ARCHITECTURE.md](ARCHITECTURE.md), [SECURITY_CHECKLIST.md](SECURITY_CHECKLIST.md), [README.md](README.md), [ROADMAP.md](ROADMAP.md)).

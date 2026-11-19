@@ -98,7 +98,8 @@ Trạng thái thực thi kỹ thuật được quản lý tại [ROADMAP.md](ROA
 | P0      | Nút kiểm chứng trên News Feed Facebook và Reddit                       | Dự kiến (mới có ở `/comments/` Reddit) |
 | P1      | Nguồn tin cậy Việt Nam trong `trusted_domains.json`                    | Đã làm (28 tên miền Việt Nam)          |
 | P1      | Đo lường sử dụng và chi phí (`metrics.db`, `/api/v1/stats/summary`)    | Đã làm (chưa có dashboard UI)          |
-| P1      | Đồng bộ feedback 5 sao và pilot với nhóm người dùng                    | Đang làm                               |
+| P1      | Đánh giá 5 sao kèm nhận xét (`POST /api/v1/feedback`)                 | Đã làm                                 |
+| P1      | Thử nghiệm pilot với nhóm người dùng                                   | Dự kiến                                |
 | P2      | Lịch sử phân tích, tóm tắt bài báo, adapter X, OAuth, Chrome Web Store | Dự kiến                                |
 
 ## 10. Rủi ro kinh doanh và giảm thiểu

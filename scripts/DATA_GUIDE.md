@@ -1,5 +1,9 @@
 # DATA_GUIDE
 
+Đặc tả định dạng dataset CSV và file annotations được nạp bởi `scripts/benchmark/run_benchmark.py`.
+
+Cập nhật theo commit `16c4a3f`, 19/11/2026.
+
 ## Cấu trúc file dataset CSV
 
 Hàm `load_dataset()` trong `scripts/benchmark/run_benchmark.py` đọc file UTF-8 (có hỗ trợ BOM `utf-8-sig`) với các cột sau:

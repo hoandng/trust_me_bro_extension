@@ -48,4 +48,4 @@ Artifact chính sau khi build:
 4. Chuyển qua lại giữa hai tab: xác nhận trạng thái hiển thị riêng theo tab và mất khi tải lại/đóng tab.
 5. Tắt backend để kiểm tra thông báo lỗi và nút **Thử lại**.
 6. Mở mục **Cài đặt** trên Side Panel, kiểm tra danh sách model tải qua `GET /api/v1/models`, chọn model khác và xác nhận `model_usage` trong mục **Chi tiết kỹ thuật** ở lần phân tích tiếp theo.
-7. Kiểm tra nút **Sao chép để chia sẻ** và xác nhận khung đánh giá 5 sao hiển thị thông báo tắt gửi mạng (`FEEDBACK_ENDPOINT_ENABLED = false`).
+7. Kiểm tra nút **Sao chép để chia sẻ** và thử gửi đánh giá 5 sao kèm nhận xét tới `POST /api/v1/feedback` (`FEEDBACK_ENDPOINT_ENABLED = true`).
