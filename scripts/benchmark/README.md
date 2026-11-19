@@ -1,47 +1,55 @@
 # Benchmark kiểm chứng (3 chế độ)
 
-Script `run_benchmark.py` so sánh 3 chế độ để trả lời câu hỏi hệ thống có **đáng dùng hơn chatbot Gemini thông thường** và **Tavily có đáng tiền** hay không:
+Hướng dẫn chạy script `scripts/benchmark/run_benchmark.py` để so sánh độ chính xác, chi phí và độ trễ giữa 3 chế độ kiểm chứng.
+
+Cập nhật theo commit `b00372f`, 19/11/2026.
+
+## Các chế độ so sánh
 
 | Chế độ | Luồng xử lý |
 |---|---|
-| `llm_only` | Gemini trả lời trực tiếp bằng kiến thức sẵn có (tương tự chatbot Gemini, không dùng công cụ tìm kiếm). |
-| `llm_factcheck` | Pipeline `AnalysisOrchestrator` với Gemini + Google Fact Check (tắt Tavily). |
-| `full` | Pipeline đầy đủ của hệ thống: Gemini + Google Fact Check + Tavily Search. |
+| `llm_only` | Gemini đánh giá trực tiếp bằng `LLM_ONLY_PROMPT`, không dùng công cụ tìm kiếm |
+| `llm_factcheck` | `AnalysisOrchestrator` chạy Gemini + Google Fact Check (thay Tavily bằng `NullTavilyService`) |
+| `full` | Pipeline đầy đủ: Gemini + Google Fact Check + Tavily Search |
 
 ## Cách chạy
 
-Chạy từ thư mục gốc (cần cấu hình `GEMINI_API_KEY`, `FACTCHECK_API_KEY`, `TAVILY_API_KEY` trong `backend/.env`):
+Chạy từ thư mục gốc sau khi cấu hình `GEMINI_API_KEY`, `FACTCHECK_API_KEY` và `TAVILY_API_KEY` trong `backend/.env` (các lệnh dưới gọi API thật và tiêu tốn hạn mức, trừ `--cache-only`):
 
 ```bash
-# Chạy thử 10 mẫu đầu trên bộ dataset 100 mẫu
+# Chạy thử 10 mẫu đầu trên bộ 100 mẫu tiếng Việt
 python scripts/benchmark/run_benchmark.py --dataset scripts/benchmark/dataset_vn_benchmark_100.csv --limit 10
 
-# Chạy toàn bộ với giới hạn tốc độ gọi API để tránh 429
+# Chạy toàn bộ có điều tiết RPM
 python scripts/benchmark/run_benchmark.py --dataset scripts/benchmark/dataset_vn_benchmark_100.csv --rpm 15
+
+# Xuất lại báo cáo từ cache (không gọi API)
+python scripts/benchmark/run_benchmark.py --dataset scripts/benchmark/dataset_vn_benchmark_100.csv --cache-only
 ```
 
-Các tùy chọn chống lỗi API phổ biến:
-- `--rpm` / `--min-interval` / `--sample-delay`: điều tiết tốc độ gọi API và tự động giãn cách khi gặp `429 Too Many Requests`.
-- `--retries`, `--http-retries`, `--transient-retries`, `--max-wait`: thử lại theo `Retry-After` + exponential backoff; tự dừng sớm nếu chạm quota ngày (`retry_after > max-wait`) mà vẫn lưu kết quả đã chạy.
-- `--max-input-chars` (mặc định `2000`), `max_output_tokens`, `thinking_level=low`: giới hạn độ dài đầu vào/đầu ra để tránh lỗi quá token hoặc cắt cụt JSON.
-- `--gemini-timeout` (mặc định `30s`) và `--timeout` (mặc định `45s`): tránh timeout giả khi mạng chậm.
-- Cache resume (`scripts/benchmark/.cache/results_v2.db`): lưu ngay mỗi lượt thành công (không lưu lỗi/degraded), chạy lại sẽ tự tiếp tục từ phần còn thiếu. Dùng `--bypass-cache` để đo mới hoàn toàn hoặc `--cache-only` để xuất lại báo cáo từ cache.
+Các tùy chọn chính (`python scripts/benchmark/run_benchmark.py --help`):
+- `--dataset`: đường dẫn CSV dataset (mặc định `scripts/benchmark/dataset_vn_benchmark_100.csv`, fallback `dataset.csv`).
+- `--annotations`: file CSV annotation tùy chọn (tự nạp `<stem>_annotations.csv` nếu tồn tại).
+- `--modes`: chọn tập con trong `llm_only`, `llm_factcheck`, `full`; `--limit`, `--repeats`, `--model`, `--allow-fallback`.
+- `--rpm`, `--min-interval` (`1.0s`), `--sample-delay` (`0.5s`): điều tiết tốc độ gọi Gemini.
+- `--retries` (`3`), `--http-retries` (`3`), `--transient-retries` (`2`), `--max-wait` (`90.0s`), `--no-stop-on-daily-quota`: xử lý `429` và lỗi tạm thời.
+- `--gemini-timeout` (`30.0s`), `--timeout` (`45.0s`), `--max-input-chars` (`2000`): giới hạn thời gian và độ dài đầu vào.
+- `--cache` (mặc định `scripts/benchmark/.cache/results_v2.db`), `--bypass-cache`, `--cache-only`: cơ chế lưu resume (chỉ lưu lượt không lỗi và không degraded; không lưu văn bản gốc).
+- `--gemini-input-price`, `--gemini-output-price`, `--tavily-credit-price`: ghi đè đơn giá tham chiếu USD.
 
 ## Kết quả đầu ra
 
-Mỗi lần chạy tạo một thư mục riêng theo giờ Việt Nam (`UTC+7`):
+Mỗi lần chạy tạo thư mục `scripts/benchmark/results/<tên_dataset>_<DD-MM-YYYY>_<HH-MM-SS>/` theo giờ `Asia/Ho_Chi_Minh` gồm 4 file:
+- `report.md`: bảng Macro-F1 (95% Bootstrap CI), Accuracy, lỗi nghiêm trọng, tỷ lệ `unverified`, chi phí, p50/p95, kiểm định McNemar, phân rã thời gian từng bước và ma trận nhầm lẫn.
+- `raw.csv`: kết quả chi tiết từng cặp mẫu × chế độ.
+- `chart.png`: biểu đồ Macro-F1 theo chi phí (sinh khi `matplotlib` khả dụng).
+- `summary.json`: toàn bộ số liệu tổng hợp dạng JSON.
 
-`scripts/benchmark/results/<tên_file_dataset>_<DD-MM-YYYY>_<HH-MM-SS>/`
-
-Bên trong gồm 4 file:
-- `report.md`: bảng so sánh 3 chế độ (Macro-F1 kèm 95% Bootstrap CI, Accuracy, Lỗi nghiêm trọng, Unverified, $/lượt, p50/p95), kiểm định McNemar, kết luận **Đáng sử dụng / Cần cải thiện**, bảng phụ `is_recent` (nếu có file `*_annotations.csv`) và ma trận nhầm lẫn.
-- `raw.csv`: dữ liệu chi tiết cho từng cặp mẫu × chế độ.
-- `chart.png`: biểu đồ Macro-F1 theo chi phí mỗi lượt.
-- `summary.json`: số liệu tổng hợp dạng JSON.
+Xem đặc tả cấu trúc CSV tại [DATA_GUIDE.md](../DATA_GUIDE.md).
 
 ## Kiểm thử bằng mock
 
 ```bash
 cd backend
-python -m pytest tests/test_benchmark.py
+pytest tests/test_benchmark.py
 ```

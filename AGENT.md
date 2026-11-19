@@ -1,111 +1,70 @@
-# AGENT.md
+# AGENT
 
-> Hướng dẫn cho AI coding agent (Claude Code, Cursor...) khi làm việc trong dự án này.
+Quy ước làm việc, lệnh kiểm tra, quy chuẩn mã nguồn và giới hạn phạm vi dành cho AI agent và người đóng góp trong repo TrustMeBro.
 
-## 1. Tổng quan dự án
+Cập nhật: 19/11/2026.
 
-- **Tên dự án:** Trust Me Bro - Extension kiểm chứng tin tức mạng xã hội
-- **Mục tiêu:** Giúp người dùng kiểm tra nhanh độ tin cậy của một đoạn nội dung trên mạng xã hội, có trích dẫn nguồn, ngay tại chỗ (không cần rời khỏi trang).
-- **Đối tượng người dùng:** Người dùng mạng xã hội phổ thông, muốn kiểm chứng tin tức/claim trước khi tin hoặc chia sẻ.
-- **Trạng thái hiện tại:** MVP có adapter Facebook và Reddit, bộ chọn model Gemini và chuyển model khi chạm quota.
+## Lệnh kiểm tra bắt buộc trước khi hoàn thành
 
-## 2. Tech stack
-
-- **Extension (client):** TypeScript strict, HTML/CSS và DOM thuần, Chrome Extension Manifest V3, Chrome Side Panel API, Vite
-- **Backend:** Python 3.11+, FastAPI, Pydantic v2, httpx (gọi API bất đồng bộ), `google-genai` SDK (Gemini Interactions API)
-- **API bên ngoài:** Google Fact Check Tools API, Gemini API, Tavily API
-- **Lưu trạng thái:** Backend xử lý theo request (in-memory rate limit và model cooldown theo process). Extension dùng `chrome.storage.session` cho trạng thái theo tab (`tabState_<tabId>`) và `chrome.storage.local` cho model ưu tiên (`preferredGeminiModel`).
-- **Package manager:** npm với `package-lock.json` cho extension, pip với `requirements.txt` cho backend.
-- **Deploy/Hosting:** Chưa chốt (gợi ý: backend deploy dạng container — Railway/Render/Fly.io cho demo)
-
-## 3. Cấu trúc thư mục
-
-```text
-/extension
-  /src
-    /entrypoints        # khởi tạo background, content, side panel
-    /features/analysis  # tính năng kiểm chứng: types, state-store, model-preference, background, content/adapters, content/ui, sidepanel
-    /infrastructure     # HTTP client (backend-client) và adapter Chrome Storage (session-store)
-    /shared             # hợp đồng message (messages.ts) và cấu hình dùng chung (config.ts)
-  /tests                # module tests (analysis.test.ts), runner (run-tests.mjs) với mock Chrome và backend
-  /public/icons
-/backend
-  /app
-    /api                # deps.py (xác thực X-API-Key, rate limit, DI) và /v1/analyze.py (routes)
-    /core               # config.py, rate_limit.py, logging.py
-    /prompts            # gemini_prompts.py (system prompts cho tách claim và đánh giá)
-    /services           # base_service, factcheck_service, gemini_service, gemini_model_pool, tavily_service
-    /orchestrator       # analysis_orchestrator.py (pipeline 3 giai đoạn & tổng hợp kết quả)
-    /schemas            # internal.py, request.py, response.py
-  /tests                # unit, security, orchestrator và e2e tests (pytest + respx)
-/scripts                # script CLI chạy thử từng service thật (try_factcheck.py, try_gemini.py, try_tavily.py)
-```
-
-> Xem chi tiết đầy đủ trong `ARCHITECTURE.md`.
-
-## 4. Quy tắc code
-
-- **Naming:** camelCase cho JS/TS (extension), snake_case cho Python (backend)
-- **Comment:** Tiếng Việt cho comment giải thích nghiệp vụ, English cho tên biến/hàm/class
-- **Không tự ý thêm dependency mới** nếu chưa xác nhận với người dùng — đặc biệt tránh thêm thư viện nặng không cần thiết cho 1 extension nhỏ
-- **Không refactor ngoài phạm vi task** được giao
-- **Extension:** dùng module theo tính năng; entrypoint chỉ khởi tạo/đăng ký listener. Không import entrypoint từ tính năng hoặc hạ tầng. Module content không import background/HTTP client; module background không import DOM/UI.
-- **TypeScript:** dùng `import type` cho kiểu dữ liệu. Logic của tính năng mới đặt trong `src/features/<tên>/`; chỉ đưa adapter kỹ thuật dùng chung vào `src/infrastructure/`.
-- **Hợp đồng:** cập nhật `src/shared/messages.ts` khi thêm message, giữ kiểu dữ liệu của tính năng trong `types.ts`. `SIDEPANEL_PATH` trong `src/shared/config.ts` là đường dẫn chung cho manifest và background.
-- **Service tra cứu** như Fact Check và Tavily dùng `BaseService.check(ctx)`. `GeminiService` cung cấp `extract_claims` và `assess`. Đặt logic gọi API bên ngoài trong service tương ứng.
-- **Extension tuyệt đối không chứa API key của Gemini/Tavily/Fact Check** — mọi lời gọi 3 API này chỉ được thực hiện từ backend
-
-## 5. Quy trình làm việc (workflow) mong muốn
-
-1. Đọc kỹ yêu cầu; nếu ảnh hưởng tới kiến trúc (thêm service mới, đổi luồng dữ liệu) → tham khảo `ARCHITECTURE.md` trước
-2. Với thay đổi lớn (thêm mạng xã hội mới, đổi cách xác thực...): viết plan ngắn, chờ xác nhận rồi mới code
-3. Sau khi code xong: tự chạy lint/test nếu có sẵn cấu hình
-4. Tóm tắt ngắn gọn thay đổi sau mỗi task, nêu rõ file nào bị ảnh hưởng
-5. Nếu task đụng tới bảo mật (API key, CORS, rate limit), xem mục 3 của `ARCHITECTURE.md` trước khi code
-
-## 6. Testing & Quality Gates
-
-- **Backend:** `pytest`, mock các API bên ngoài (Fact Check/Gemini/Tavily) khi test — không gọi API thật trong test tự động
-- **Extension:** `npm test` kiểm tra hợp đồng message, mapping response, trạng thái theo tab và luồng API với mock; chạy thêm `npm run typecheck`, `npm run lint`, `npm run build`. Kiểm tra thủ công trên Chrome theo `extension/README.md`. E2E backend có `test_e2e.py`.
-- **Pre-commit:** Ruff, Ruff Format, Gitleaks, ESLint và `tsc --noEmit`.
-- **CI:** `ci.yml` chạy trên PR vào `main` với Node 20 và Python 3.13. Workflow quét secret, chạy lint/typecheck, test backend và build extension. Chạy `npm test` riêng ở local. Bước E2E trong CI hiện ghi thông báo khi lệnh test E2E thất bại và vẫn tiếp tục workflow.
-
-Lệnh chạy test backend:
-```bash
-cd backend
-.venv\Scripts\Activate.ps1  # PowerShell, hoặc source .venv/bin/activate trên macOS/Linux
-python -m pytest
-```
-
-## 7. Lệnh thường dùng
+Chạy đầy đủ các lệnh tương ứng với phần mã bị thay đổi:
 
 ```bash
-# Backend
-cd backend
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --no-proxy-headers
+# Backend (từ thư mục backend/, đã kích hoạt .venv)
+ruff check .
+pytest -m "not e2e"
+pytest tests/test_e2e.py
 
-# Extension
-cd extension
-npm ci
-npm run build   # build ra dist/ để load unpacked vào Chrome
-
-# Cài đặt Quality Gates (Local)
-pip install pre-commit
-pre-commit install
+# Extension (từ thư mục extension/)
+npm run lint
+npm run typecheck
+npm test
+npm run build
 ```
 
-## 8. Việc KHÔNG được làm
+Pre-commit (`.pre-commit-config.yaml`) chạy `ruff --fix`, `ruff-format`, `gitleaks`, `eslint` và `tsc --noEmit`. CI (`.github/workflows/ci.yml`) chạy trên PR vào `main` với Node `20` và Python `3.13`; CI hiện chưa chạy `npm test` nên phải chạy `npm test` tại máy.
 
-- Không hardcode API key (Gemini/Tavily/Fact Check) trong bất kỳ file nào của `extension/`
-- Không commit file `.env` hoặc secrets
-- Không push trực tiếp lên nhánh `main`/`production`
-- Không lưu nội dung bài đăng của người dùng vào log hoặc file, trừ metadata cần thiết (xem mục bảo mật trong ARCHITECTURE.md)
-- Không thay đổi kiến trúc `services/orchestrator` (ví dụ: gọi thẳng API bên ngoài từ route) nếu chưa bàn bạc — sẽ phá vỡ khả năng mở rộng
+## Quy ước code
 
-## 9. Liên kết tài liệu khác
+- Đặt tên `camelCase` cho TypeScript (`extension/`) và `snake_case` cho Python (`backend/`).
+- Dùng tiếng Anh cho tên biến, hàm, lớp; dùng tiếng Việt cho comment giải thích nghiệp vụ và chuỗi giao diện người dùng.
+- Dùng `import type` cho mọi import chỉ chứa kiểu trong TypeScript; đặt dữ liệu hợp đồng message tại `extension/src/shared/messages.ts` và dùng chung `SIDEPANEL_PATH` tại `extension/src/shared/config.ts`.
+- Dựng DOM Side Panel bằng `document.createElement` và `.textContent`; không dùng `innerHTML` với dữ liệu từ backend hoặc trang web.
+- Đặt mọi lời gọi HTTP/SDK tới nhà cung cấp ngoài trong `backend/app/services/`; các dịch vụ tra cứu kế thừa `BaseService` và bọc `@safe_execute`.
+- Chỉ sửa trong phạm vi task được giao; không tự ý thêm dependency mới hoặc refactor ngoài phạm vi khi chưa có xác nhận.
 
-- Kiến trúc kỹ thuật chi tiết: `ARCHITECTURE.md`
-- Kế hoạch phát triển: `ROADMAP.md`
+## Cập nhật tài liệu (bắt buộc)
+
+Mỗi thay đổi code kèm cập nhật tài liệu trong CÙNG commit.
+
+1. Trước khi hoàn thành, xác định tài liệu bị ảnh hưởng theo bảng "Thay đổi → tài liệu".
+2. Chỉ sửa tài liệu sở hữu thông tin đó. Nơi khác dùng link, không chép lại.
+3. Mô tả trạng thái hiện tại. Không kể lịch sử, không ghi tính năng dự kiến như đã xong.
+4. Chạy `python scripts/docs_sync.py --check` và kiểm tra liên kết.
+5. Báo cáo cuối task nêu: tài liệu đã sửa; tài liệu đã xem xét nhưng không cần sửa (kèm lý do).
+
+Không cần sửa tài liệu khi: sửa lỗi không đổi hành vi công khai, refactor nội bộ, thêm test.
+
+## Quy tắc phụ thuộc
+
+Tuân thủ ranh giới lớp `entrypoints/ → features/ → infrastructure/` ở extension và `api/ → orchestrator/ → services/` ở backend. Không lặp lại chi tiết kiến trúc tại đây; xem sơ đồ, cấu trúc thành phần, hợp đồng API và lưu trữ SQLite/RAM tại [ARCHITECTURE.md](ARCHITECTURE.md), cấu hình môi trường tại [README.md](README.md) và yêu cầu bảo mật tại [SECURITY_CHECKLIST.md](SECURITY_CHECKLIST.md).
+
+## Quy ước kiểm thử
+
+- Mọi test tự động ở `backend/tests/` phải mock các dịch vụ ngoài (Gemini, Fact Check, Tavily) bằng `respx` hoặc `unittest.mock`; không gọi API thật trong `pytest`.
+- Test extension (`npm test`) dùng `extension/tests/run-tests.mjs` biên dịch TypeScript qua Vite vào `.cache/tests/` và chạy `node --test` với mock Chrome API và `fetch`.
+- Khi sửa pipeline, bảo mật, cache hoặc hợp đồng message, bổ sung test hồi quy tương ứng tại `backend/tests/` hoặc `extension/tests/analysis.test.ts`.
+- Khi cần chạy thử dịch vụ thật bằng khóa trong `backend/.env`, dùng các script thủ công trong `scripts/` (`try_factcheck.py`, `try_tavily.py`, `try_gemini.py`) hoặc `scripts/benchmark/run_benchmark.py`.
+
+## Không làm
+
+- Không đọc, in, log hoặc commit file `.env`, API key, token hay file `backend/data/metrics.db`.
+- Không đặt `GEMINI_API_KEY`, `TAVILY_API_KEY` hoặc `FACTCHECK_API_KEY` trong mã nguồn hay bundle `extension/`.
+- Không ghi nguyên văn nội dung bài đăng hoặc `page_url` của người dùng vào log, `analysis_metrics` hoặc `chrome.storage`.
+- Không gọi trực tiếp API bên thứ ba từ route FastAPI, bỏ qua `AnalysisOrchestrator`, hoặc gọi từ `content/` của extension.
+- Không đẩy thay đổi trực tiếp lên nhánh `main` và không bỏ qua các bước lint/typecheck/test.
+
+## Quy ước nhánh và commit
+
+- Tạo nhánh làm việc riêng từ `main` và mở Pull Request vào `main` để CI kiểm tra.
+- Dùng tiền tố Conventional Commits ngắn gọn: `feat`, `fix`, `refactor`, `test`, `docs`, `chore` kèm phạm vi tùy chọn (ví dụ `feat(backend): ...`, `fix(extension): ...`, `docs: ...`).
+- Khi thay đổi hành vi API, cấu hình hoặc trạng thái tính năng, cập nhật tài liệu sở hữu tương ứng theo [ROADMAP.md](ROADMAP.md) và [ARCHITECTURE.md](ARCHITECTURE.md).

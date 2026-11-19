@@ -1,105 +1,40 @@
-Ran project structure exploration
-Analyzed run_benchmark.py:L1-651
-Analyzed dataset.csv:L1-11
-Analyzed README.md:L1-39
+# DATA_GUIDE
 
-Tôi đã đọc xong toàn bộ codebase. Đây là sản phẩm **fact-checking / kiểm chứng thông tin** (browser extension + backend AI). Dưới đây là cấu trúc dataset đầy đủ để chạy benchmark:
+## Cấu trúc file dataset CSV
 
----
+Hàm `load_dataset()` trong `scripts/benchmark/run_benchmark.py` đọc file UTF-8 (có hỗ trợ BOM `utf-8-sig`) với các cột sau:
 
-## Cấu trúc Dataset cho Benchmark
+| Cột          | Bắt buộc | Quy tắc kiểm tra trong code                                                   | Mô tả                                                               |
+| ------------ | -------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `id`         | Có       | Không trống, không trùng lặp trong file                                       | Mã định danh mẫu                                                    |
+| `text`       | Có       | Không trống (cắt gọn theo `--max-input-chars`, mặc định `2000`)               | Nội dung claim cần đánh giá                                         |
+| `label`      | Có       | Một trong `true`, `false`, `mixed`, `unverified` (không phân biệt hoa/thường) | Nhãn ground truth                                                   |
+| `topic`      | Không    | Mặc định `"other"` nếu trống                                                  | Chủ đề mẫu (ví dụ `health`, `scam`, `finance`, `disaster`, `other`) |
+| `date`       | Không    | Mặc định `""` nếu trống                                                       | Ngày tham chiếu của claim                                           |
+| `source_url` | Không    | `load_dataset()` không đọc cột này                                            | Lưu trữ nguồn tham chiếu phục vụ kiểm tra thủ công                  |
 
-### Format bắt buộc — `dataset.csv`
+## File annotations tùy chọn
 
-```
-id,text,label,topic,source_url,date
-```
+Nếu tồn tại file `<tên_dataset>_annotations.csv` cùng thư mục (hoặc truyền qua `--annotations`), `load_annotations()` tự nạp thêm metadata theo `id`:
 
-| Cột          | Kiểu     | Giá trị hợp lệ                                           | Mô tả                         |
-| ------------ | -------- | -------------------------------------------------------- | ----------------------------- |
-| `id`         | `string` | Duy nhất, không trống                                    | ID định danh mẫu              |
-| `text`       | `string` | Không trống                                              | Nội dung claim cần kiểm chứng |
-| `label`      | `enum`   | `true` \| `false` \| `mixed` \| `unverified`             | Nhãn ground truth             |
-| `topic`      | `enum`   | `health` \| `scam` \| `finance` \| `disaster` \| `other` | Chủ đề                        |
-| `source_url` | `string` | URL HTTP(S) hợp lệ                                       | Nguồn tham chiếu cho claim    |
-| `date`       | `string` | `YYYY-MM-DD`                                             | Ngày claim xuất hiện          |
+- `is_recent`: dùng để tách bảng thống kê phụ trong `report.md` (ví dụ `yes` / `no`).
+- `difficulty`: lưu vào đối tượng `Sample` theo từng mẫu.
 
----
+## Các bộ dữ liệu hiện có trong repo
 
-### Phân phối mẫu khuyến nghị
+| File                                                         | Số mẫu | Ghi chú                                                                                   |
+| ------------------------------------------------------------ | ------ | ----------------------------------------------------------------------------------------- |
+| `scripts/benchmark/dataset_vn_benchmark_100.csv`             | 100    | Dataset mặc định của `run_benchmark.py`, tiếng Việt                                       |
+| `scripts/benchmark/dataset_vn_benchmark_100_annotations.csv` | 100    | Bảng annotation (`is_recent`, `difficulty`, `hard_type`, `rationale`, ...) cho bộ 100 mẫu |
+| `scripts/benchmark/dataset.csv`                              | 71     | Bộ claim hỗn hợp tiếng Anh và tiếng Việt có kèm `source_url`                              |
+| `scripts/benchmark/dataset_vn_excel.csv`                     | —      | Bản CSV xuất từ bảng tính của bộ mẫu tiếng Việt                                           |
 
-Để đánh giá chất lượng có ý nghĩa thống kê, bạn cần **đủ mẫu cho mỗi class** vì macro-F1 tính đều 4 nhãn:
+## Kiểm tra định dạng dataset
 
-```
-Tối thiểu: 40 mẫu (10/nhãn)
-Khuyến nghị: 100–200 mẫu
-```
-
-**Phân phối theo label:**
-
-```
-true        ~30%   (thông tin đúng rõ ràng)
-false       ~30%   (thông tin sai rõ ràng)
-mixed       ~20%   (đúng + sai lẫn lộn)
-unverified  ~20%   (không thể xác minh)
-```
-
-**Phân phối theo topic:**
-
-```
-health      ~25%   (sức khỏe, y tế)
-scam        ~25%   (lừa đảo, OTP, thông báo giả)
-finance     ~20%   (tài chính, lãi suất)
-disaster    ~15%   (thiên tai, bão lũ)
-other       ~15%   (khoa học tổng quát, địa lý...)
-```
-
----
-
-### Ví dụ dataset thực tế mở rộng
-
-```csv
-id,text,label,topic,source_url,date
-h-001,"Vitamin D từ ánh nắng mặt trời giúp cơ thể hấp thu canxi hiệu quả hơn.",true,health,https://www.who.int/news-room/fact-sheets/detail/vitamin-d,2026-10-01
-h-002,"Uống nước oxy có thể chữa ung thư và tăng cường miễn dịch gấp 10 lần.",false,health,https://suckhoedoisong.vn/nuoc-oxy,2026-10-02
-h-003,"COVID-19 vaccine vừa hiệu quả vừa có thể gây biến chứng hiếm gặp ở một số nhóm.",mixed,health,https://vnexpress.net/vaccine-covid,2026-10-03
-h-004,"Thuốc đông y gia truyền bí mật của ông Nguyễn X có thể trị tiểu đường trong 7 ngày.",unverified,health,https://facebook.com/post/xyz,2026-10-04
-s-001,"Ngân hàng không bao giờ yêu cầu cung cấp mã OTP qua điện thoại.",true,scam,https://www.sbv.gov.vn/canh-bao-lua-dao,2026-10-05
-s-002,"Nhắn tin WINNING để nhận thưởng 500 triệu từ chương trình của Bộ Công an.",false,scam,https://bocongan.gov.vn/canh-bao,2026-10-06
-f-001,"Lãi suất gửi tiết kiệm kỳ hạn 12 tháng tại Vietcombank hiện là 4,7%/năm.",true,finance,https://vietcombank.com.vn/lai-suat,2026-10-07
-d-001,"Bão số 3 năm 2024 (Yagi) đổ bộ vào miền Bắc Việt Nam gây thiệt hại nghiêm trọng.",true,disaster,https://vnexpress.net/bao-yagi-2024,2026-10-08
-o-001,"Trái Đất quay quanh Mặt Trời với chu kỳ xấp xỉ 365,25 ngày.",true,other,https://nasa.gov/solar-system/earth,2026-10-09
-```
-
----
-
-### Hướng dẫn tạo các loại mẫu khó
-
-| Loại mẫu                   | Mô tả                                                  | Lý do quan trọng                            |
-| -------------------------- | ------------------------------------------------------ | ------------------------------------------- |
-| **Factual hard negatives** | Sai một chi tiết nhỏ ("3 loại" thay vì "4 loại")       | Test độ nhạy của model                      |
-| **Mixed claims**           | Câu có 2 vế, một đúng một sai                          | Test khả năng phân tách                     |
-| **Unverifiable events**    | Sự kiện cục bộ, không có nguồn online                  | Test khi Fact Check + Tavily không tìm được |
-| **Scam patterns**          | Template lừa đảo OTP, giải thưởng, trúng số            | Domain quan trọng nhất của sản phẩm         |
-| **Contradictory sources**  | Claim mà các nguồn khác nhau đưa ra verdict ngược nhau | Test xử lý `mixed`                          |
-
----
-
-### Checklist trước khi chạy benchmark
+Chạy kiểm tra nạp file mà không gọi API thật (các mẫu chưa có trong cache sẽ báo `cache_miss`):
 
 ```bash
-# Kiểm tra format dataset
-python scripts/benchmark/run_benchmark.py --dataset path/to/dataset.csv --cache-only
-
-# Chạy thử 5 mẫu đầu
-python scripts/benchmark/run_benchmark.py --dataset path/to/dataset.csv --limit 5
-
-# Chạy toàn bộ
-python scripts/benchmark/run_benchmark.py --dataset path/to/dataset.csv
+python scripts/benchmark/run_benchmark.py --dataset scripts/benchmark/dataset_vn_benchmark_100.csv --cache-only
 ```
 
-> [!IMPORTANT]
-> Dataset hiện tại ([`dataset.csv`](file:///f:/UTC/Nam_5/Enterprise_Application/trust-me-bro/scripts/benchmark/dataset.csv)) chỉ có 10 mẫu minh họa với `source_url` giả (`example.invalid`). Bạn cần tạo file CSV riêng với URL thật để chạy benchmark thực sự — `source_url` chỉ dùng để tham chiếu và chấm điểm nguồn, không ảnh hưởng logic phân loại.
-
-> [!TIP]
-> Sau khi chạy, benchmark sinh ra file `benchmark_<ngày>_citations.csv`. Bạn điền cột `supports_verdict` = `true`/`false` để đánh giá **citation validity** — tỷ lệ nguồn mà hệ thống trích dẫn thực sự củng cố verdict của nó.
+Hướng dẫn chạy đầy đủ xem [scripts/benchmark/README.md](benchmark/README.md).
