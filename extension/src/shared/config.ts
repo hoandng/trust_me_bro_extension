@@ -1,8 +1,8 @@
 // Vite và background dùng cùng đường dẫn để manifest và side panel luôn khớp nhau.
 export const SIDEPANEL_PATH = 'src/entrypoints/sidepanel/index.html';
 
-// Cờ bật/tắt gửi đánh giá 5 sao lên backend (/api/v1/feedback hiện chưa nhận schema {request_id, rating, comment}).
-export const FEEDBACK_ENDPOINT_ENABLED = false;
+// Cờ bật/tắt gửi đánh giá 5 sao lên backend.
+export const FEEDBACK_ENDPOINT_ENABLED = true;
 
 let feedbackEndpointEnabled = FEEDBACK_ENDPOINT_ENABLED;
 

@@ -65,3 +65,6 @@ $RECYCLE.BIN/
 # Node / JS additional
 .eslintcache
 .stylelintcache
+
+*.csv
+results/

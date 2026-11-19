@@ -7,6 +7,7 @@ import unicodedata
 from contextlib import closing
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 
 from app.core.config import settings
@@ -136,10 +137,61 @@ class MetricsStore:
                     ON analysis_metrics(total_ms);
                 CREATE TABLE IF NOT EXISTS feedback (
                     request_id TEXT PRIMARY KEY REFERENCES analysis_metrics(request_id),
-                    helpful INTEGER NOT NULL CHECK (helpful IN (0, 1)),
-                    reason TEXT
+                    rating INTEGER CHECK (rating IS NULL OR (rating >= 1 AND rating <= 5)),
+                    comment TEXT,
+                    legacy_helpful INTEGER CHECK (legacy_helpful IS NULL OR legacy_helpful IN (0, 1)),
+                    reason TEXT,
+                    feedback_at TEXT NOT NULL
                 );
             """)
+            self._migrate_feedback_table(db)
+
+    def _migrate_feedback_table(self, db: sqlite3.Connection) -> None:
+        columns = {
+            row[1] for row in db.execute("PRAGMA table_info(feedback)").fetchall()
+        }
+        expected = {
+            "request_id",
+            "rating",
+            "comment",
+            "legacy_helpful",
+            "reason",
+            "feedback_at",
+        }
+        if expected.issubset(columns):
+            return
+
+        db.execute(
+            """
+            CREATE TABLE feedback_new (
+                request_id TEXT PRIMARY KEY REFERENCES analysis_metrics(request_id),
+                rating INTEGER CHECK (rating IS NULL OR (rating >= 1 AND rating <= 5)),
+                comment TEXT,
+                legacy_helpful INTEGER CHECK (legacy_helpful IS NULL OR legacy_helpful IN (0, 1)),
+                reason TEXT,
+                feedback_at TEXT NOT NULL
+            )
+            """
+        )
+        if "helpful" in columns:
+            fallback_ts = datetime.now(UTC).isoformat()
+            db.execute(
+                """
+                INSERT INTO feedback_new (request_id, rating, comment, legacy_helpful, reason, feedback_at)
+                SELECT
+                    f.request_id,
+                    NULL,
+                    NULL,
+                    f.helpful,
+                    f.reason,
+                    COALESCE(m.created_at, ?)
+                FROM feedback f
+                LEFT JOIN analysis_metrics m ON m.request_id = f.request_id
+                """,
+                (fallback_ts,),
+            )
+        db.execute("DROP TABLE feedback")
+        db.execute("ALTER TABLE feedback_new RENAME TO feedback")
 
     def record(
         self,
@@ -194,19 +246,50 @@ class MetricsStore:
                 ),
             )
 
-    def save_feedback(self, request_id: str, helpful: bool, reason: str | None) -> bool:
+    def save_feedback(
+        self,
+        request_id: str,
+        *,
+        rating: int | None = None,
+        comment: str | None = None,
+        helpful: bool | None = None,
+        reason: str | None = None,
+    ) -> str:
+        """Lưu phản hồi và trả trạng thái: 'ok', 'not_found', hoặc 'conflict'."""
+        now_iso = datetime.now(UTC).isoformat()
         with closing(self._connect()) as db, db:
-            cursor = db.execute(
-                """
-                INSERT INTO feedback (request_id, helpful, reason)
-                    SELECT request_id, ?, ? FROM analysis_metrics WHERE request_id = ?
-                    AND verdict IS NOT NULL
-                ON CONFLICT (request_id) DO UPDATE SET
-                    helpful = excluded.helpful, reason = excluded.reason
-                """,
-                (int(helpful), reason, request_id),
-            )
-            return cursor.rowcount == 1
+            exists = db.execute(
+                "SELECT 1 FROM analysis_metrics WHERE request_id = ? AND verdict IS NOT NULL",
+                (request_id,),
+            ).fetchone()
+            if exists is None:
+                return "not_found"
+
+            if helpful is not None:
+                db.execute(
+                    """
+                    INSERT INTO feedback (request_id, rating, comment, legacy_helpful, reason, feedback_at)
+                    VALUES (?, NULL, NULL, ?, ?, ?)
+                    ON CONFLICT (request_id) DO UPDATE SET
+                        legacy_helpful = excluded.legacy_helpful,
+                        reason = excluded.reason,
+                        feedback_at = excluded.feedback_at
+                    """,
+                    (request_id, int(helpful), reason, now_iso),
+                )
+                return "ok"
+
+            try:
+                db.execute(
+                    """
+                    INSERT INTO feedback (request_id, rating, comment, legacy_helpful, reason, feedback_at)
+                    VALUES (?, ?, ?, NULL, NULL, ?)
+                    """,
+                    (request_id, rating, comment, now_iso),
+                )
+                return "ok"
+            except sqlite3.IntegrityError:
+                return "conflict"
 
     def summary(self) -> dict:
         with closing(self._connect()) as db, db:
@@ -230,9 +313,21 @@ class MetricsStore:
                     "SELECT total_ms FROM analysis_metrics ORDER BY total_ms LIMIT 1 OFFSET ?",
                     (rank - 1,),
                 ).fetchone()
-            feedback_count, helpful_rate = db.execute(
-                "SELECT COUNT(*), AVG(helpful) FROM feedback"
+            feedback_count, helpful_rate, avg_rating, comment_count = db.execute(
+                """
+                SELECT
+                    COUNT(*),
+                    AVG(legacy_helpful),
+                    AVG(rating),
+                    COUNT(comment)
+                FROM feedback
+                """
             ).fetchone()
+            rating_rows = dict(
+                db.execute(
+                    "SELECT rating, COUNT(*) FROM feedback WHERE rating IS NOT NULL GROUP BY rating"
+                )
+            )
         return {
             "total_checks": total,
             "verdict_counts": {
@@ -250,4 +345,11 @@ class MetricsStore:
             "checks_with_estimated_cost": cost_count,
             "feedback_count": feedback_count,
             "helpful_rate": helpful_rate,
+            "average_rating": avg_rating,
+            "rating_distribution": {
+                str(star): rating_rows.get(star, 0) for star in range(1, 6)
+            },
+            "comment_rate": (
+                comment_count / feedback_count if feedback_count else None
+            ),
         }

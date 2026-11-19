@@ -52,7 +52,7 @@ flowchart TD
 | `GET /health`               | Không             | Không                                       | `200` `{"status": "ok"}`                                          |
 | `GET /api/v1/models`        | `X-API-Key`       | Không                                       | `200` `{default_model, models}`; `401`, `500`                     |
 | `POST /api/v1/analyze`      | `X-API-Key`       | IP/phút, Key/ngày (miss cache), Global/ngày | `200` `AnalyzeResponse`; `401`, `413`, `422`, `429`, `500`, `503` |
-| `POST /api/v1/feedback`     | `X-API-Key`       | Dùng chung IP, Key, Global với `/analyze`   | `204` (ghi/cập nhật); `401`, `404`, `413`, `422`, `429`, `500`    |
+| `POST /api/v1/feedback`     | `X-API-Key`       | Dùng chung IP, Key, Global với `/analyze`   | `200` `{"status": "ok"}`; `401`, `404`, `409`, `413`, `422`, `429`, `500` |
 | `GET /api/v1/stats/summary` | `X-Admin-API-Key` | Không                                       | `200` thống kê tổng hợp; `401`, `503`                             |
 
 Schema request của `POST /api/v1/analyze` (`backend/app/schemas/request.py`):
@@ -104,9 +104,9 @@ Ví dụ `POST /api/v1/analyze` request và response (`backend/app/schemas/respo
 }
 ```
 
-Schema `POST /api/v1/feedback` (`backend/app/api/v1/metrics.py`, `extra="forbid"`): `request_id` (`UUID4`), `helpful` (`StrictBool`), `reason` (`"incorrect_verdict" | "missing_context" | "weak_sources" | "other" | null`). Extension hiện giữ cờ `FEEDBACK_ENDPOINT_ENABLED = false` trong `extension/src/shared/config.ts` vì UI Side Panel dùng schema `{request_id, rating (1..5), comment?}`.
+Schema `POST /api/v1/feedback` (`backend/app/api/v1/metrics.py`, `extra="forbid"`): nhận `request_id` (`UUID4`), `rating` (`StrictInt` `1..5`) và `comment` (`str | null`, chuẩn hóa Unicode NFC, bỏ ký tự điều khiển trừ `\n`/`\t`, gộp khoảng trắng, chuỗi rỗng thành `null`, tối đa `500` ký tự); giữ tương thích ngược `helpful` (`StrictBool`) + `reason` (`"incorrect_verdict" | "missing_context" | "weak_sources" | "other" | null`) và không cho truyền đồng thời `rating` và `helpful`. Phía Extension đã bật `FEEDBACK_ENDPOINT_ENABLED = true` (`extension/src/shared/config.ts`) để người dùng chọn 1–5 sao, nhập nhận xét tùy chọn và gửi qua Background (`SUBMIT_ANALYSIS_FEEDBACK`, chỉ gửi `{request_id, rating, comment?}`, không kèm nội dung bài đăng hay `page_url`), sau đó khoá khối đánh giá trên tab hiện tại.
 
-Mã lỗi HTTP: `401` (thiếu/sai key), `404` (không tìm thấy `request_id` có verdict khi gửi feedback), `413` (`Content-Length > MAX_BODY_SIZE_BYTES`), `422` (sai schema hoặc `model_id` không được bật), `429` (vượt rate limit, kèm `Retry-After`), `500` (chưa đặt `EXTENSION_API_KEY` hoặc lỗi nội bộ), `503` (mọi model Gemini cạn quota kèm `Retry-After`, lỗi ghi SQLite metrics khi status `200`, hoặc `ADMIN_API_KEY` chưa đặt/trùng `EXTENSION_API_KEY`).
+Mã lỗi HTTP: `401` (thiếu/sai key), `404` (không tìm thấy `request_id` có verdict khi gửi feedback), `409` (`request_id` đã có đánh giá sao trước đó), `413` (`Content-Length > MAX_BODY_SIZE_BYTES`), `422` (sai schema hoặc `model_id` không được bật; handler `RequestValidationError` lược bỏ trường `input` để không phản chiếu `comment`), `429` (vượt rate limit, kèm `Retry-After`), `500` (chưa đặt `EXTENSION_API_KEY` hoặc lỗi nội bộ), `503` (mọi model Gemini cạn quota kèm `Retry-After`, lỗi ghi SQLite metrics khi status `200`, hoặc `ADMIN_API_KEY` chưa đặt/trùng `EXTENSION_API_KEY`).
 
 ## Quy tắc ra quyết định của pipeline
 
@@ -130,7 +130,7 @@ Pipeline trong `AnalysisOrchestrator` chạy theo deadline đơn điệu `ANALYS
 
 - **SQLite (`METRICS_DB_PATH`, mặc định `backend/data/metrics.db`):**
   - `analysis_metrics`: lưu `request_id`, `created_at`, `platform`, `text_length`, `content_hash` (SHA-256 của văn bản chuẩn hóa NFKC + gộp khoảng trắng), `http_status`, `verdict`, `confidence`, độ trễ từng bước, model, usage, `cache_hit`, `estimated_cost_usd`. Không lưu văn bản gốc hoặc `page_url`.
-  - `feedback`: khóa chính `request_id` tham chiếu `analysis_metrics`, lưu `helpful` (`0`/`1`) và `reason`.
+  - `feedback`: khóa chính `request_id` tham chiếu `analysis_metrics`, lưu `rating` (`1..5`), `comment` (`TEXT`), `legacy_helpful` (`0`/`1`), `reason` và `feedback_at` (ISO UTC). `MetricsStore.initialize()` tự động migrate idempotent từ bảng cũ (chuyển `helpful` sang `legacy_helpful`). Log chỉ ghi `request_id`, `rating`, `comment_length` (không log nội dung `comment`). `GET /api/v1/stats/summary` trả thêm `average_rating`, `rating_distribution` (`1..5`) và `comment_rate` (không trả nội dung `comment`).
   - `analysis_cache`: khóa chính `(content_hash, prompt_version, model_id, lang)` với `content_hash` (SHA-256 lowercase + gộp khoảng trắng), `prompt_version` (SHA-256 của `EXTRACT_CLAIMS_PROMPT` và `ASSESS_PROMPT`), `lang` (SHA-256 của `lang`). TTL mặc định: `86400s` (`confidence >= 0.8`, khác `unverified`), `3600s` (`< 0.8`), `900s` (`unverified`). Không ghi cache khi timeout, có provider `"error"`, `ttl <= 0`, `bypass_cache=true`, hoặc response lặp lại `text`/`page_url`.
 - **RAM backend (theo process):** `RateLimiter` (IP/phút, Key/24h, Global/ngày UTC) và `GeminiModelPool` (cooldown model).
 - **Trình duyệt (Extension):** RAM Service Worker (`tabRuns` Map) giữ `request`, `response`, `error`, `feedback` và xóa khi đóng hoặc điều hướng tab. `chrome.storage.session` chỉ lưu `{status, request_id?}` (`tabState_<tabId>`) và `geminiModelCatalog`. `chrome.storage.local` chỉ lưu `preferredGeminiModel`.
@@ -149,7 +149,7 @@ Pipeline trong `AnalysisOrchestrator` chạy theo deadline đơn điệu `ANALYS
 | Giữ dữ liệu phiên phân tích trên RAM Worker              | Tránh lưu nội dung bài đăng vào `chrome.storage`                          | Mất trạng thái chi tiết nếu Service Worker bị tắt    |
 | Dùng SQLite cục bộ cho metrics và cache                  | Không cần dịch vụ cơ sở dữ liệu ngoài ở giai đoạn hiện tại                | Không chia sẻ dữ liệu khi chạy nhiều máy chủ độc lập |
 | Xếp hạng nguồn bằng `trusted_domains.json`               | Ưu tiên nguồn cơ quan nhà nước và báo chính thống trước khi đánh giá      | Cần cập nhật danh sách tên miền thủ công             |
-| Tắt gửi feedback qua `FEEDBACK_ENDPOINT_ENABLED = false` | Ngăn gửi lỗi `422` khi UI 5 sao lệch schema backend (`helpful`, `reason`) | Chưa thu thập được phản hồi từ Extension             |
+| Bật feedback 5 sao (`FEEDBACK_ENDPOINT_ENABLED = true`)     | Khớp UI 5 sao + nhận xét với backend và lưu SQLite (`rating`, `comment`)  | Giữ cột `legacy_helpful` để không mất dữ liệu cũ   |
 
 ## Ràng buộc và giới hạn đã biết
 
