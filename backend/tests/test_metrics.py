@@ -203,7 +203,8 @@ def test_records_metadata_and_actual_fallback_calls(
             "helpful": True,
         },
     )
-    assert feedback.status_code == 204
+    assert feedback.status_code == 200
+    assert feedback.json() == {"status": "ok"}
     summary = client.get("/api/v1/stats/summary", headers=ADMIN_HEADERS).json()
     assert summary["total_checks"] == 1
     assert summary["verdict_rates"]["mixed"] == 1
@@ -247,7 +248,7 @@ def test_summary_matches_known_data(client):
                 "reason": "weak_sources" if not helpful else None,
             },
         )
-        assert response.status_code == 204
+        assert response.status_code == 200
 
     response = client.get("/api/v1/stats/summary", headers=ADMIN_HEADERS)
     assert response.status_code == 200
@@ -271,6 +272,9 @@ def test_summary_matches_known_data(client):
         "checks_with_estimated_cost": 2,
         "feedback_count": 3,
         "helpful_rate": pytest.approx(2 / 3),
+        "average_rating": None,
+        "rating_distribution": {"1": 0, "2": 0, "3": 0, "4": 0, "5": 0},
+        "comment_rate": 0.0,
     }
 
 
@@ -363,3 +367,143 @@ def test_quota_failure_still_records_metadata(client, sdk, metrics_db_path):
     )
     assert record["extract_ms"] >= 0
     assert record["evidence_ms"] is record["assess_ms"] is None
+
+
+def test_star_rating_feedback_storage_validation_and_conflict(
+    client, metrics_db_path, caplog
+):
+    store = app.state.metrics_store
+    req_id = str(uuid4())
+    store.record(
+        request_id=req_id,
+        created_at="2026-11-19T00:00:00+00:00",
+        platform="facebook",
+        text_length=40,
+        content_hash=content_digest("Synthetic star feedback"),
+        http_status=200,
+        verdict="likely_true",
+        confidence=0.9,
+        total_ms=250,
+        metrics=AnalysisMetrics(requested_model="gemini-metrics-test"),
+    )
+
+    for bad_rating in (0, 6, 3.5, "5", True):
+        bad = client.post(
+            "/api/v1/feedback",
+            headers=EXTENSION_HEADERS,
+            json={"request_id": req_id, "rating": bad_rating},
+        )
+        assert bad.status_code == 422
+
+    too_long = "x" * 501
+    with caplog.at_level("INFO"):
+        over = client.post(
+            "/api/v1/feedback",
+            headers=EXTENSION_HEADERS,
+            json={"request_id": req_id, "rating": 4, "comment": too_long},
+        )
+    assert over.status_code == 422
+    assert too_long not in over.text
+    assert too_long not in caplog.text
+
+    secret_comment = "  Nguồn rất rõ\x00 ràng 👍  "
+    with caplog.at_level("INFO"):
+        ok = client.post(
+            "/api/v1/feedback",
+            headers=EXTENSION_HEADERS,
+            json={"request_id": req_id, "rating": 5, "comment": secret_comment},
+        )
+    assert ok.status_code == 200
+    assert ok.json() == {"status": "ok"}
+    assert "Nguồn rất rõ" not in caplog.text
+
+    dup = client.post(
+        "/api/v1/feedback",
+        headers=EXTENSION_HEADERS,
+        json={"request_id": req_id, "rating": 3},
+    )
+    assert dup.status_code == 409
+
+    with closing(sqlite3.connect(metrics_db_path)) as db:
+        db.row_factory = sqlite3.Row
+        row = db.execute(
+            "SELECT rating, comment, legacy_helpful, feedback_at FROM feedback WHERE request_id = ?",
+            (req_id,),
+        ).fetchone()
+    assert row["rating"] == 5
+    assert row["comment"] == "Nguồn rất rõ ràng 👍"
+    assert row["legacy_helpful"] is None
+    assert row["feedback_at"]
+
+    summary = client.get("/api/v1/stats/summary", headers=ADMIN_HEADERS).json()
+    assert summary["feedback_count"] == 1
+    assert summary["average_rating"] == 5.0
+    assert summary["rating_distribution"] == {"1": 0, "2": 0, "3": 0, "4": 0, "5": 1}
+    assert summary["comment_rate"] == 1.0
+
+
+def test_feedback_table_migration_preserves_legacy_rows(tmp_path):
+    from app.core.metrics import MetricsStore
+
+    db_path = tmp_path / "legacy_metrics.db"
+    req_id = str(uuid4())
+    with closing(sqlite3.connect(db_path)) as db, db:
+        db.executescript(
+            """
+            CREATE TABLE analysis_metrics (
+                request_id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                platform TEXT NOT NULL,
+                text_length INTEGER NOT NULL,
+                content_hash TEXT NOT NULL,
+                http_status INTEGER NOT NULL,
+                verdict TEXT,
+                confidence REAL,
+                extract_ms INTEGER,
+                evidence_ms INTEGER,
+                assess_ms INTEGER,
+                total_ms INTEGER NOT NULL,
+                requested_model TEXT NOT NULL,
+                extraction_model TEXT,
+                assessment_model TEXT,
+                tavily_calls INTEGER NOT NULL,
+                factcheck_calls INTEGER NOT NULL,
+                tavily_credits INTEGER,
+                gemini_usage TEXT NOT NULL,
+                cache_hit INTEGER NOT NULL CHECK (cache_hit IN (0, 1)),
+                estimated_cost_usd REAL
+            );
+            CREATE TABLE feedback (
+                request_id TEXT PRIMARY KEY REFERENCES analysis_metrics(request_id),
+                helpful INTEGER NOT NULL CHECK (helpful IN (0, 1)),
+                reason TEXT
+            );
+            """
+        )
+        db.execute(
+            """
+            INSERT INTO analysis_metrics VALUES (
+                ?, '2026-11-11T00:00:00+00:00', 'facebook', 30, 'hash', 200,
+                'likely_true', 0.9, 10, 10, 10, 30, 'm', 'm', 'm', 0, 0, 0, '[]', 0, 0.0
+            )
+            """,
+            (req_id,),
+        )
+        db.execute(
+            "INSERT INTO feedback (request_id, helpful, reason) VALUES (?, 1, 'other')",
+            (req_id,),
+        )
+
+    store = MetricsStore(db_path)
+    store.initialize()
+    store.initialize()  # idempotent
+
+    with closing(sqlite3.connect(db_path)) as db:
+        db.row_factory = sqlite3.Row
+        row = db.execute(
+            "SELECT * FROM feedback WHERE request_id = ?", (req_id,)
+        ).fetchone()
+    assert row["legacy_helpful"] == 1
+    assert row["reason"] == "other"
+    assert row["rating"] is None
+    assert row["feedback_at"] == "2026-11-11T00:00:00+00:00"
