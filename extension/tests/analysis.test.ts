@@ -609,15 +609,17 @@ test('cờ FEEDBACK_ENDPOINT_ENABLED = false chặn gửi mạng; khi bật gử
     });
   }
 
-  // Mặc định cờ FEEDBACK_ENDPOINT_ENABLED = false: không gọi mạng, không khóa state.feedback
+  // Khi cờ FEEDBACK_ENDPOINT_ENABLED = false -> chặn gửi mạng, không khóa state.feedback
+  setFeedbackEndpointEnabled(false);
   assert.equal(isFeedbackEndpointEnabled(), false);
   const disabledReply = await send(message);
   assert.deepEqual(disabledReply, { ok: false, error: 'Tính năng đánh giá sẽ sớm có' });
   assert.equal(posts, 0);
   assert.equal(getLiveAnalysisState(7)?.feedback, undefined);
 
-  // Khi bật cờ cho phép gửi tới endpoint
-  setFeedbackEndpointEnabled(true);
+  // Mặc định FEEDBACK_ENDPOINT_ENABLED = true: gửi đúng {request_id, rating, comment}
+  setFeedbackEndpointEnabled(FEEDBACK_ENDPOINT_ENABLED);
+  assert.equal(isFeedbackEndpointEnabled(), true);
   assert.equal(
     listener(message, { ...sender, url: request.payload.page_url }, () => {
       assert.fail('Message from the page should be ignored');

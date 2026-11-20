@@ -1,12 +1,14 @@
-# PROMPTS.md — Kế hoạch đầu việc & prompt cho AI
+# PROMPTS
 
-> T0–T13 ghi lại các prompt phát triển ban đầu. Khi làm việc trên mã hiện tại, dùng cấu trúc và luồng trong [ARCHITECTURE.md](ARCHITECTURE.md), [hướng dẫn extension](extension/README.md) và [hướng dẫn backend](backend/README.md). Xem [ROADMAP.md](ROADMAP.md) để theo dõi các hạng mục tiếp theo.
+Thư viện prompt khởi tạo (T0–T15) và mẫu prompt làm việc cho AI trong dự án TrustMeBro.
 
-> Mỗi prompt ghi lại bối cảnh, yêu cầu và tiêu chí hoàn thành của một task. Các prompt scaffold và mock áp dụng cho giai đoạn khởi tạo.
+Cập nhật theo commit `f491d97`, 20/11/2026.
+
+Khi làm việc trên mã hiện tại, tham chiếu cấu trúc, hợp đồng API và quy tắc phụ thuộc tại [ARCHITECTURE.md](ARCHITECTURE.md), cấu hình tại [README.md](README.md), bảo mật tại [SECURITY_CHECKLIST.md](SECURITY_CHECKLIST.md) và tiến độ tại [ROADMAP.md](ROADMAP.md).
 
 ## Quy ước chung
 
-**Prompt mở đầu (dán vào ĐẦU mọi task):**
+**Prompt mở đầu (dán vào đầu mỗi task):**
 
 ```text
 Đọc AGENT.md, ARCHITECTURE.md, ROADMAP.md ở thư mục gốc trước.
@@ -19,36 +21,22 @@ Với API/SDK bên ngoài (Gemini, Tavily, Google Fact Check, Chrome APIs):
 tra tài liệu chính thức mới nhất, không dựa vào trí nhớ về tên model/endpoint/tham số.
 ```
 
-**Hợp đồng API hiện tại**
+**Hợp đồng API hiện tại:** Xem chi tiết endpoint và schema tại [ARCHITECTURE.md](ARCHITECTURE.md), [request.py](backend/app/schemas/request.py), [response.py](backend/app/schemas/response.py) và [metrics.py](backend/app/api/v1/metrics.py).
 
-```text
-AnalyzeRequest:  { text: str (20–2000 ký tự), platform: "facebook"|"x"|"reddit",
-                   page_url?: str, lang?: str, model_id?: str }
-AnalyzeResponse: { verdict: "likely_true"|"likely_false"|"mixed"|"unverified",
-                   confidence_score: float 0..1,
-                   explanation: str,
-                   sources: [{ title, url, publisher?, snippet?, stance?: "supports"|"refutes"|"neutral" }],
-                   service_status: { factcheck: "ok"|"error"|"empty", tavily: ..., gemini: ... },
-                   model_usage: null | { requested_model: str, extraction_model: str|null,
-                     assessment_model: str|null, fallbacks: [{ stage, model, reason }] } }
-ModelCatalog:    { default_model: str, models: str[] }
-```
+**Bản đồ tổng và trạng thái:**
 
-`GET /api/v1/models` trả `ModelCatalog`. `POST /api/v1/analyze` dùng `model_id` đã bật hoặc model mặc định khi bỏ qua trường này. Hai endpoint dùng `X-API-Key`. Backend trả `503` cùng `Retry-After` khi mọi model Gemini đang chạm hạn mức. Xem [schema request](backend/app/schemas/request.py) và [schema response](backend/app/schemas/response.py) khi thay đổi hợp đồng.
-
-**Bản đồ tổng:**
-
-| Giai đoạn | Task | Kết quả |
-|---|---|---|
-| Nền | T0 | Repo, môi trường, quy tắc |
-| Lát cắt mock | T1–T6 | Luồng end-to-end chạy bằng dữ liệu giả |
-| Dịch vụ thật | T7–T10 | 3 API + orchestrator |
-| Chất lượng | T11–T14 | Bảo mật, UI, test, đánh giá thực tế |
-| Phát hành | T15 | Deploy + đóng gói |
+| Giai đoạn    | Task    | Kết quả                           | Trạng thái                                                                    |
+| ------------ | ------- | --------------------------------- | ----------------------------------------------------------------------------- |
+| Nền          | T0      | Repo, môi trường, quy tắc         | Đã hoàn thành                                                                 |
+| Lát cắt mock | T1–T6   | Luồng end-to-end bằng dữ liệu giả | Đã hoàn thành                                                                 |
+| Dịch vụ thật | T7–T10  | 3 API + orchestrator              | Đã hoàn thành                                                                 |
+| Chất lượng   | T11–T13 | Bảo mật, UI, CI/pre-commit        | Đã hoàn thành                                                                 |
+| Đánh giá     | T14     | Bộ đánh giá `evals/cases.yaml`    | Lỗi thời (đã thay bằng `scripts/benchmark/run_benchmark.py`)                  |
+| Phát hành    | T15     | Deploy + đóng gói                 | Chưa hoàn thành (mới có `backend/Dockerfile` và `docker-compose.yml` cho dev) |
 
 ---
 
-## T0 — Chuẩn bị repo (làm tay, không cần AI)
+## T0 — Chuẩn bị repo `[Đã hoàn thành]`
 
 - [ ] `git init`, tạo nhánh `main` và `dev`
 - [ ] Cấu trúc: `extension/`, `backend/`, 3 file .md + `PROMPTS.md` ở gốc
@@ -59,7 +47,7 @@ ModelCatalog:    { default_model: str, models: str[] }
 
 ---
 
-## T1 — Backend skeleton + endpoint mock
+## T1 — Backend skeleton + endpoint mock `[Đã hoàn thành]`
 
 **Mục tiêu:** Backend chạy được, `/analyze` trả dữ liệu giả đúng schema.
 
@@ -92,7 +80,7 @@ Commit: `feat(backend): scaffold + mock analyze endpoint`
 
 ---
 
-## T2 — Extension skeleton (Manifest V3)
+## T2 — Extension skeleton (Manifest V3) `[Đã hoàn thành]`
 
 **Mục tiêu:** Build ra được extension rỗng, load unpacked vào Chrome không lỗi.
 
@@ -128,7 +116,7 @@ Commit: `feat(extension): scaffold MV3 + build pipeline`
 
 ---
 
-## T3 — Content script: bắt bôi đen + nút nổi (Facebook adapter)
+## T3 — Content script: bắt bôi đen + nút nổi (Facebook adapter) `[Đã hoàn thành]`
 
 **Mục tiêu:** Bôi đen text trên Facebook → hiện nút "Phân tích đoạn văn này".
 
@@ -163,7 +151,7 @@ Commit: `feat(extension): selection detection + floating button`
 
 ---
 
-## T4 — Background service worker + side panel (dữ liệu mock local)
+## T4 — Background service worker + side panel (dữ liệu mock local) `[Đã hoàn thành]`
 
 **Mục tiêu:** Bấm nút → side panel mở và hiển thị kết quả (mock cứng trong extension).
 
@@ -199,7 +187,7 @@ Commit: `feat(extension): background state + side panel UI (mock)`
 
 ---
 
-## T5 — Kết nối extension ↔ backend (vẫn mock backend)
+## T5 — Kết nối extension ↔ backend (vẫn mock backend) `[Đã hoàn thành]`
 
 **Mục tiêu:** Luồng end-to-end thật giữa 2 phía; bảo mật nền tảng.
 
@@ -231,11 +219,11 @@ Không làm: rate limit, gọi 3 API thật.
 
 Commit: `feat: connect extension to backend with API key + CORS`
 
-> ✅ **Checkpoint 1:** Đến đây bạn có luồng end-to-end hoàn chỉnh bằng dữ liệu giả. Hãy tự demo cho người khác xem trước khi làm tiếp.
+> **Checkpoint 1:** Hoàn thành luồng end-to-end bằng dữ liệu giả.
 
 ---
 
-## T6 — Base service interface + khung orchestrator
+## T6 — Base service interface + khung orchestrator `[Đã hoàn thành]`
 
 **Mục tiêu:** Chuẩn hoá cách một "nguồn dữ liệu" hoạt động để T7–T9 cắm vào.
 
@@ -265,7 +253,7 @@ Commit: `feat(backend): service interface + orchestrator skeleton`
 
 ---
 
-## T7 — Google Fact Check Tools service
+## T7 — Google Fact Check Tools service `[Đã hoàn thành]`
 
 ```text
 [TASK T7] Cài đặt factcheck_service.py.
@@ -293,7 +281,7 @@ Commit: `feat(backend): google fact check service`
 
 ---
 
-## T8 — Tavily service
+## T8 — Tavily service `[Đã hoàn thành]`
 
 ```text
 [TASK T8] Cài đặt tavily_service.py.
@@ -316,7 +304,7 @@ Commit: `feat(backend): tavily service`
 
 ---
 
-## T9 — Gemini service (2 chức năng: tách claim & đánh giá)
+## T9 — Gemini service (2 chức năng: tách claim & đánh giá) `[Đã hoàn thành]`
 
 > Lưu ý thiết kế: Gemini cần bằng chứng từ 2 nguồn kia để đánh giá, nên pipeline sẽ là
 > **(0) tách claim → (1) FactCheck + Tavily song song → (2) Gemini tổng hợp**. Task T10 sẽ cập nhật lại ARCHITECTURE.md mục 2.3 cho khớp.
@@ -359,7 +347,7 @@ Commit: `feat(backend): gemini service (claim extraction + assessment)`
 
 ---
 
-## T10 — Orchestrator hoàn chỉnh + chấm điểm
+## T10 — Orchestrator hoàn chỉnh + chấm điểm `[Đã hoàn thành]`
 
 ```text
 [TASK T10] Hoàn thiện analysis_orchestrator.py theo pipeline 3 giai đoạn.
@@ -390,11 +378,11 @@ Tiêu chí hoàn thành: chạy thử end-to-end với extension thật trên 3 
 
 Commit: `feat(backend): full orchestrator pipeline`
 
-> ✅ **Checkpoint 2:** Sản phẩm đã chạy thật. Tag `v0.1.0-alpha`.
+> **Checkpoint 2:** Hoàn thành pipeline thực tế với 3 dịch vụ bên ngoài.
 
 ---
 
-## T11 — Bảo mật & chống lạm dụng
+## T11 — Bảo mật & chống lạm dụng `[Đã hoàn thành]`
 
 ```text
 [TASK T11] Rà soát và gia cố bảo mật.
@@ -425,7 +413,7 @@ Commit: `feat(security): rate limit, limits, hardening + checklist`
 
 ---
 
-## T12 — Hoàn thiện UI side panel
+## T12 — Hoàn thiện UI side panel `[Đã hoàn thành]`
 
 ```text
 [TASK T12] Nâng cấp trải nghiệm side panel.
@@ -450,7 +438,7 @@ Commit: `feat(extension): polished side panel UI`
 
 ---
 
-## T13 — Cổng chất lượng tự động
+## T13 — Cổng chất lượng tự động `[Đã hoàn thành]`
 
 ```text
 [TASK T13] Thiết lập quality gates.
@@ -470,7 +458,9 @@ Commit: `chore: CI, pre-commit, secret scanning`
 
 ---
 
-## T14 — Bộ đánh giá thực tế & tinh chỉnh prompt
+## T14 — Bộ đánh giá thực tế & tinh chỉnh prompt `[Lỗi thời]`
+
+> Đường dẫn `backend/evals/cases.yaml` và `scripts/run_evals.py` không tồn tại; hệ thống đánh giá hiện triển khai tại [scripts/benchmark/README.md](scripts/benchmark/README.md) (`scripts/benchmark/run_benchmark.py`).
 
 **Mục tiêu:** Biết hệ thống đúng/sai ở đâu, đặc biệt với tiếng Việt.
 
@@ -497,7 +487,9 @@ Commit: `feat(evals): evaluation set and runner`
 
 ---
 
-## T15 — Deploy & đóng gói
+## T15 — Deploy & đóng gói `[Chưa hoàn thành]`
+
+> Hiện mới có `backend/Dockerfile` đơn tầng và `docker-compose.yml` cho môi trường phát triển; chưa có script đóng gói `.zip` và hướng dẫn deploy production.
 
 ```text
 [TASK T15] Chuẩn bị phát hành bản demo.
