@@ -2,7 +2,7 @@
 
 Tài liệu kiểm kê mối đe doạ, biện pháp bảo mật đang có trong mã nguồn, luồng dữ liệu, rủi ro còn lại và quy trình xử lý khi lộ khoá của TrustMeBro.
 
-Cập nhật: 19/11/2026.
+Cập nhật theo commit `f491d97`, 20/11/2026.
 
 ## Kiểm soát bảo mật
 

@@ -2,7 +2,7 @@
 
 Đặc tả định dạng dataset CSV và file annotations được nạp bởi `scripts/benchmark/run_benchmark.py`.
 
-Cập nhật theo commit `16c4a3f`, 19/11/2026.
+Cập nhật theo commit `f491d97`, 20/11/2026.
 
 ## Cấu trúc file dataset CSV
 

@@ -2,7 +2,7 @@
 
 Tài liệu mô tả kiến trúc hệ thống, hợp đồng API, quy tắc pipeline, lưu trữ dữ liệu và ranh giới phụ thuộc của TrustMeBro.
 
-Cập nhật: 19/11/2026.
+Cập nhật theo commit `f491d97`, 20/11/2026.
 
 ## Tổng quan
 
@@ -110,14 +110,14 @@ Mã lỗi HTTP: `401` (thiếu/sai key), `404` (không tìm thấy `request_id` 
 
 ## Quy tắc ra quyết định của pipeline
 
-Pipeline trong `AnalysisOrchestrator` chạy theo deadline đơn điệu `ANALYSIS_TIMEOUT_SECONDS` (mặc định `25.0s`), với trần mỗi bước AI `stage_cap = max(20.0, ANALYSIS_TIMEOUT_SECONDS * 0.6)`.
+Pipeline trong `AnalysisOrchestrator` chạy theo deadline đơn điệu `ANALYSIS_TIMEOUT_SECONDS` (mặc định `25.0s`), mỗi bước AI giới hạn tối đa `min(deadline, now + 20s)`.
 
-1. **Stage 0 (`extract_claims`):** Timeout `min(deadline, now + stage_cap)`, SDK timeout `15s`, tối đa 2 lần thử khi lỗi ngoài `429` hoặc lỗi validate JSON. Trung hòa `[[`/`]]`, bọc đầu vào trong `<post>...</post>`. Nếu lỗi, timeout hoặc rỗng: trả `unverified`, `confidence_score = 0.0`, `service_status.gemini = "error"`. Nếu `is_checkable = false`: dừng sớm, trả `unverified`, `confidence_score = 0.0`, `sources = []`.
-2. **Stage 1 (thu thập bằng chứng song song):** Lấy tối đa `min(SEARCH_QUERY_LIMIT, 2)` truy vấn khác rỗng và không trùng (dùng `main_claim` nếu rỗng). Chạy song song mọi cặp `(provider, query)` trong `asyncio.wait(..., timeout=min(remaining, 15.0))`, mỗi service bọc `@safe_execute(timeout_seconds=10.0)`:
+1. **Stage 0 (`extract_claims`):** Timeout `min(deadline, now + 20s)`, SDK timeout `15s`, tối đa 2 lần thử khi lỗi ngoài `429` hoặc lỗi validate JSON. Trung hòa `[[`/`]]`, bọc đầu vào trong `<post>...</post>`. Prompt hiện tại (`EXTRACT_CLAIMS_PROMPT`) hướng dẫn định tuyến gọi tool, nhưng `GeminiService.extract_claims()` chỉ truyền `response_format` cho `ClaimExtraction` (không truyền `tools`). Nếu lỗi, timeout hoặc rỗng: trả `unverified`, `confidence_score = 0.0`, `service_status.gemini = "error"`. Nếu `is_checkable = false`: dừng sớm, trả `unverified`, `confidence_score = 0.0`, `sources = []`.
+2. **Stage 1 (thu thập bằng chứng song song):** `_build_evidence_jobs()` ưu tiên đọc `extraction.tool_calls` (tối đa `min(SEARCH_QUERY_LIMIT, 2)` cặp duy nhất để gọi `search_google_factcheck` / `search_web_tavily`), nếu rỗng mới fallback về `extraction.search_queries[:query_limit]` (hoặc `main_claim`) trên cả hai provider. Lưu ý: `ClaimExtraction` hiện chưa khai báo `tool_calls` và `AnalysisContext` chưa có `tavily_topic` (chi tiết lỗi xem [DOC_AUDIT.md](docs/DOC_AUDIT.md)). Các tác vụ chạy song song qua `asyncio.wait(..., timeout=min(remaining, 15.0))`, mỗi service bọc `@safe_execute(timeout_seconds=10.0)`:
    - `FactCheckService`: gọi `claims:search` (`pageSize=10`, kèm `languageCode=ctx.lang`), thử lại 1 lần không `languageCode` nếu rỗng. Ánh xạ `textualRating` theo `RATING_GROUPS` (EN/VI) sang `supports`/`refutes`/`neutral` và khóa `original_stance` (`frozen=True`).
    - `TavilySearchService`: gọi `POST https://api.tavily.com/search` (`search_depth="basic"`, `max_results=5`, `include_published_date=True`, `include_usage=True`), thử `topic="news"` rồi fallback `"general"`. Cắt `snippet` tối đa 300 ký tự.
 3. **Gộp, xếp hạng và điều kiện dừng sớm:** Gộp FactCheck trước, Tavily sau, loại trùng theo `url` (giữ bản FactCheck). Xếp hạng theo `backend/app/core/trusted_domains.json` (`tier1` gồm 17 tên miền, `tier2` gồm 15 tên miền, còn lại `default`) và lấy tối đa `8` nguồn. Nếu quá `deadline`: trả `unverified` (`0.0`, gắn `gemini="error"` nếu có nguồn) kèm nguồn đã thu. Nếu rỗng nguồn: trả `unverified` (`0.3`).
-4. **Stage 2 (`assess`) và hậu xử lý:** Timeout `min(deadline, now + stage_cap)`, tối đa 2 lần thử. Truyền ngày hiện tại (`Asia/Ho_Chi_Minh`), `claim`, `<post>`, và tối đa 8 nguồn kèm `source_tier`, `published_date`, `source_type`, `claim_text`, `original_stance`. Lọc bỏ URL ngoài tập nguồn; làm sạch đánh dấu `[[+...]]`, `[[-...]]`, `[[?...]]` (tối đa 4 đoạn không lồng, sai cú pháp thì bỏ hết ký hiệu).
+4. **Stage 2 (`assess`) và hậu xử lý:** Timeout `min(deadline, now + 20s)`, tối đa 2 lần thử. Truyền ngày hiện tại (`Asia/Ho_Chi_Minh`), `claim`, `<post>`, và tối đa 8 nguồn kèm `source_tier`, `published_date`, `source_type`, `claim_text`, `original_stance`. Lọc bỏ URL ngoài tập nguồn; làm sạch đánh dấu `[[+...]]`, `[[-...]]`, `[[?...]]` (tối đa 4 đoạn không lồng, sai cú pháp thì bỏ hết ký hiệu).
    - Cập nhật `stance` từ Gemini chỉ cho nguồn thuộc Tavily (không trùng URL với FactCheck).
    - **Ưu tiên FactCheck:** Chỉ xét nguồn `factcheck_sources[:1]` nếu nằm trong top 8 `sorted_sources`, `assessment.status != "error"`, `claim_text` khác rỗng và Gemini trả `factcheck_match = True`. Khi thỏa mãn và `original_stance` là `supports` hoặc `refutes`, ghi đè verdict thành `likely_true` hoặc `likely_false` và đặt `confidence_score = max(confidence_score, 0.8)`.
    - **Nhất quán điểm tin cậy:** `likely_true` hoặc `likely_false` phải có `confidence_score >= 0.5`; `unverified` giới hạn `confidence_score <= 0.4`.

@@ -2,7 +2,7 @@
 
 Quy ước làm việc, lệnh kiểm tra, quy chuẩn mã nguồn và giới hạn phạm vi dành cho AI agent và người đóng góp trong repo TrustMeBro.
 
-Cập nhật: 19/11/2026.
+Cập nhật theo commit `f491d97`, 20/11/2026.
 
 ## Lệnh kiểm tra bắt buộc trước khi hoàn thành
 

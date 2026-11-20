@@ -2,7 +2,7 @@
 
 TrustMeBro gồm Chrome Extension Manifest V3 và backend FastAPI giúp kiểm chứng độ tin cậy đoạn văn bản trên Facebook và Reddit kèm nguồn đối chứng. Extension gửi văn bản tới backend để trích xuất khẳng định, tra cứu Google Fact Check Tools API và Tavily Search API, sau đó tổng hợp kết luận bằng Gemini Interactions API.
 
-Cập nhật: 19/11/2026.
+Cập nhật theo commit `f491d97`, 20/11/2026.
 
 ## Tính năng
 

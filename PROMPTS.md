@@ -2,7 +2,7 @@
 
 Thư viện prompt khởi tạo (T0–T15) và mẫu prompt làm việc cho AI trong dự án TrustMeBro.
 
-Cập nhật: 19/11/2026.
+Cập nhật theo commit `f491d97`, 20/11/2026.
 
 Khi làm việc trên mã hiện tại, tham chiếu cấu trúc, hợp đồng API và quy tắc phụ thuộc tại [ARCHITECTURE.md](ARCHITECTURE.md), cấu hình tại [README.md](README.md), bảo mật tại [SECURITY_CHECKLIST.md](SECURITY_CHECKLIST.md) và tiến độ tại [ROADMAP.md](ROADMAP.md).
 

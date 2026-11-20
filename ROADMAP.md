@@ -2,7 +2,7 @@
 
 Tài liệu theo dõi trạng thái hiện tại theo hạng mục, kế hoạch tiếp theo và phạm vi loại trừ của TrustMeBro.
 
-Cập nhật: 19/11/2026.
+Cập nhật theo commit `f491d97`, 20/11/2026.
 
 ## Tổng quan trạng thái
 

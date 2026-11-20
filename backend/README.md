@@ -2,7 +2,7 @@
 
 Hướng dẫn vận hành, cấu hình reverse proxy, xoay vòng model và chạy kiểm thử cho dịch vụ FastAPI trong `backend/`.
 
-Cập nhật: 19/11/2026.
+Cập nhật theo commit `f491d97`, 20/11/2026.
 
 ## Cài đặt, cấu hình và kiến trúc
 
@@ -38,7 +38,7 @@ GEMINI_MODELS=["gemini-3.1-flash-lite","gemini-3.5-flash","gemini-2.5-flash-lite
 GEMINI_QUOTA_COOLDOWN_SECONDS=60
 ```
 
-Chỉ liệt kê các model được bật trong project Google AI Studio và hỗ trợ Interactions API cùng Structured Output. Nếu bỏ trống `GEMINI_MODELS`, backend chỉ dùng `GEMINI_MODEL`. Quy tắc cooldown, fallback và giới hạn thời gian từng bước (`stage_cap = max(20.0, ANALYSIS_TIMEOUT_SECONDS * 0.6)`) xem tại [ARCHITECTURE.md](../ARCHITECTURE.md).
+Chỉ liệt kê các model được bật trong project Google AI Studio và hỗ trợ Interactions API cùng Structured Output. Nếu bỏ trống `GEMINI_MODELS`, backend chỉ dùng `GEMINI_MODEL`. Quy tắc cooldown, fallback và giới hạn thời gian từng bước (`20s` trong phần ngân sách còn lại) xem tại [ARCHITECTURE.md](../ARCHITECTURE.md).
 
 ## Kiểm thử và script chạy thử dịch vụ
 

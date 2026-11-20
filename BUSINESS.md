@@ -2,7 +2,7 @@
 
 Tài liệu định hướng kinh doanh, phân khúc khách hàng, giả định mô hình doanh thu và KPI của TrustMeBro. Các số liệu gắn nhãn **[GIẢ ĐỊNH]** chưa được kiểm chứng thực nghiệm.
 
-Cập nhật: 19/11/2026.
+Cập nhật theo commit `f491d97`, 20/11/2026.
 
 ## 1. Vấn đề
 

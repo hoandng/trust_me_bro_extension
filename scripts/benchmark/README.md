@@ -2,7 +2,7 @@
 
 Hướng dẫn chạy script `scripts/benchmark/run_benchmark.py` để so sánh độ chính xác, chi phí và độ trễ giữa 3 chế độ kiểm chứng.
 
-Cập nhật:19/11/2026.
+Cập nhật theo commit `f491d97`, 20/11/2026.
 
 ## Các chế độ so sánh
 

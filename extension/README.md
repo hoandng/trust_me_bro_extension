@@ -2,7 +2,7 @@
 
 Hướng dẫn build Vite, nạp vào trình duyệt, gỡ lỗi và kiểm tra thủ công cho Chrome Extension Manifest V3 trong `extension/`.
 
-Cập nhật: 19/11/2026.
+Cập nhật theo commit `f491d97`, 20/11/2026.
 
 ## Cài đặt, cấu hình và kiến trúc
 
