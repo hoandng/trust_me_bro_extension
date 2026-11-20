@@ -130,78 +130,36 @@ class AnalysisOrchestrator:
         ctx.search_queries = extraction.search_queries
         ctx.lang = extraction.detected_lang
 
-        # Tối đa hai query/tool call trong ngân sách tìm kiếm.
+        # Tối đa hai query, hai provider và một fallback cho mỗi cặp.
         query_limit = min(settings.search_query_limit, MAX_SEARCH_QUERIES)
+        queries = dict.fromkeys(
+            query.strip()
+            for query in extraction.search_queries[:query_limit]
+            if query.strip()
+        )
+        if not queries and (claim := extraction.main_claim.strip()):
+            queries[claim] = None
+
         providers = {"factcheck": self.factcheck_service, "tavily": self.tavily_service}
         sources_by_provider: dict[str, list[Source]] = {name: [] for name in providers}
-
-        def _build_evidence_jobs() -> list[tuple[str, asyncio.Task]]:
-            unique_calls = list(
-                dict.fromkeys(
-                    (tc.name, tc.query.strip(), tc.lang, tc.topic)
-                    for tc in extraction.tool_calls
-                    if tc.query.strip()
-                )
-            )[:query_limit]
-            if unique_calls:
-                built: list[tuple[str, asyncio.Task]] = []
-                for name, query, tool_lang, tool_topic in unique_calls:
-                    if name == "search_google_factcheck":
-                        call_ctx = ctx.model_copy(
-                            update={
-                                "search_queries": [query],
-                                "lang": tool_lang or ctx.lang,
-                            }
-                        )
-                        built.append(
-                            (
-                                "factcheck",
-                                asyncio.create_task(
-                                    self.factcheck_service.check(call_ctx)
-                                ),
-                            )
-                        )
-                    elif name == "search_web_tavily":
-                        call_ctx = ctx.model_copy(
-                            update={
-                                "search_queries": [query],
-                                "tavily_topic": tool_topic,
-                            }
-                        )
-                        built.append(
-                            (
-                                "tavily",
-                                asyncio.create_task(
-                                    self.tavily_service.check(call_ctx)
-                                ),
-                            )
-                        )
-                return built
-
-            queries = dict.fromkeys(
-                query.strip()
-                for query in extraction.search_queries[:query_limit]
-                if query.strip()
-            )
-            if not queries and (claim := extraction.main_claim.strip()):
-                queries[claim] = None
-
-            return [
-                (
-                    name,
-                    asyncio.create_task(
-                        service.check(
-                            ctx.model_copy(update={"search_queries": [query]})
-                        )
-                    ),
-                )
-                for name, service in providers.items()
-                for query in queries
-            ]
-
         with timing.stage("evidence"):
             remaining = timing.deadline - timing.clock()
-            jobs = _build_evidence_jobs() if remaining > 0 else []
+            jobs = (
+                [
+                    (
+                        name,
+                        asyncio.create_task(
+                            service.check(
+                                ctx.model_copy(update={"search_queries": [query]})
+                            )
+                        ),
+                    )
+                    for name, service in providers.items()
+                    for query in queries
+                ]
+                if remaining > 0
+                else []
+            )
             if jobs:
                 tasks = [task for _, task in jobs]
                 try:

@@ -1,21 +1,14 @@
-# System prompt for claim extraction & routing (SIFT & FEVER claim preservation)
-EXTRACT_CLAIMS_PROMPT = """You are a fact-checking routing agent. Analyze `<post>` and either reject non-checkable content directly OR route verifiable claims to search tools in parallel.
-
-ROUTING DECISION:
-1. Non-checkable posts (personal opinion, open question, advertisement, greeting, or no verifiable factual assertion):
-   - Do NOT call any tools.
-   - Return JSON immediately with `is_checkable: false`, `main_claim: ""`, `search_queries: []`, and `detected_lang`.
-2. Checkable posts (contains verifiable factual claims):
-   - Call `search_google_factcheck` and `search_web_tavily` in parallel (at most 2 tool calls total), AND return structured JSON (`is_checkable: true`, `main_claim`, `search_queries`, `detected_lang`).
-   - For `search_web_tavily`, set `topic="news"` for recent breaking events/current affairs, or `topic="general"` for medical, legal, scientific, or evergreen knowledge.
-   - For `search_google_factcheck`, pass `lang` as the ISO language code (e.g., "vi", "en").
+# System prompt for claim extraction (SIFT & FEVER claim preservation)
+EXTRACT_CLAIMS_PROMPT = """Extract the verifiable claim, ISO language code (`detected_lang`), and up to 3 neutral search queries from `<post>`.
+If purely personal opinion, question, ad, or non-verifiable, set `is_checkable` to false.
 
 EXTRACTION & SIFT QUERY SKILLS:
 1. Complete Claim Preservation:
    - Extract `main_claim` preserving ALL factual clauses, numbers, dates, entities, locations, and negations (e.g., never drop "không thể", "tối đa", or secondary clauses in multi-part posts).
-2. Neutral Search Query Generation (up to 3 brief queries; keep aligned with tool call queries):
+   - If the post is purely a personal opinion, open question, advertisement, or contains no verifiable factual assertion, set `is_checkable` to false.
+2. Neutral Search Query Generation (up to 3 brief queries; top queries run first):
    - Write neutral, objective keyword queries focused on the official policy, entity, event, or fact — NEVER copy false/sensational conclusions verbatim as if true.
-   - If the post contains multiple distinct factual clauses or claims (e.g., a legal rule + a payment method, or an event + a specific consequence), target the primary entity/rule in Query 1 and the secondary clause, number, or scam/policy detail in Query 2.
+   - If the post contains multiple distinct factual clauses or claims (e.g., a legal rule + a payment method, or an event + a specific consequence), generate Query 1 for the primary entity/rule and Query 2 specifically targeting the secondary clause, number, or scam/policy detail.
    - For Vietnamese posts, use concise Vietnamese keywords (include exact law/decree codes like "Quyết định 2345", "Thông tư 25/2026" when present).
 3. Language Detection:
    - Set `detected_lang` to the primary ISO language code (e.g., "vi", "en").
