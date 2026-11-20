@@ -79,10 +79,10 @@ Xây dựng một hệ thống **kiểm chứng thông tin tích hợp AI** dư�
 |---|---|---|---|---|
 | Dùng ngay trên trang đang đọc | **Có** (extension trên Facebook/Reddit, hiển thị trong Side Panel; kiểm chứng từ code) | Không (phải sao chép sang) (cần người kiểm tra) | Không (cần người kiểm tra) | Không (cần người kiểm tra) |
 | Có nguồn dẫn kèm ngày | **Có** (Tavily trả `published_date` khi có; Fact Check hiện chưa trả ngày; kiểm chứng từ code) | **[CẦN ĐIỀN: xác minh đối thủ & dẫn nguồn]** | Có (cho claim đã kiểm chứng) (cần người kiểm tra) | Có (cần người kiểm tra) |
-| Phủ tin mới chưa được kiểm chứng | **Có (qua Tavily Search)** — trên 35 mẫu `is_recent=yes` đạt Accuracy 65.7%, Macro-F1 0.461 (`report.md`, 17/11/2026) | **[CẦN ĐIỀN: xác minh đối thủ & dẫn nguồn]** | Hạn chế (tương tự `llm_factcheck` đạt 3.0% độ phủ trên 100 mẫu VN) (cần người kiểm tra) | Hạn chế (cần người kiểm tra) |
+| Phủ tin mới chưa được kiểm chứng | **Có (qua Tavily Search)** — trên 35 mẫu `is_recent=yes` đạt Accuracy `65.7%` (F1 `0.461`) ngày 17/11, `65.7%` (F1 `0.559`) ngày 19/11 và `54.3%` (F1 `0.456`) ở đợt `full`-only 20/11 (`report.md`) | **[CẦN ĐIỀN: xác minh đối thủ & dẫn nguồn]** | Hạn chế (tương tự `llm_factcheck` đạt 3.0% độ phủ trên 100 mẫu VN) (cần người kiểm tra) | Hạn chế (cần người kiểm tra) |
 | Thừa nhận khi chưa đủ bằng chứng | **Có** (dừng sớm khi `is_checkable=false`, trả `unverified` khi thiếu nguồn/timeout, trần confidence `≤ 0.4`) | **[CẦN ĐIỀN: xác minh đối thủ & dẫn nguồn]** | Không áp dụng (cần người kiểm tra) | Có (cần người kiểm tra) |
-| Tốc độ | **p50 = 8.39s / p95 = 15.56s** (`full`, 100 mẫu, 17/11/2026) | **[CẦN ĐIỀN: đối chiếu tốc độ thực tế của chatbot đối thủ; ghi chú: baseline `llm_only` dùng API Gemini trong benchmark đạt p50 1.89s / p95 5.34s]** | **[CẦN ĐIỀN: tốc độ thực tế trên web Explorer]** | **[CẦN ĐIỀN: tốc độ thực tế]** |
-| Độ chính xác (benchmark) | **Accuracy 63.0%, Macro-F1 0.598** (`full`, `dataset_vn_benchmark_100.csv`, 17/11/2026) | **[CẦN ĐIỀN: đối chiếu đối thủ; ghi chú: baseline API `llm_only` trong benchmark đạt Acc 51.0%, Macro-F1 0.505]** | **[CẦN ĐIỀN: đối chiếu Explorer thực tế; ghi chú: chế độ `llm_factcheck` trong benchmark đạt Acc 16.0%, Macro-F1 0.085]** | Không áp dụng |
+| Tốc độ | **`p50 = 8.39s / p95 = 15.56s`** (17/11), **`14.66s / 22.87s`** (19/11), **`7.01s / 20.00s`** (20/11) (`full`, 100 mẫu) | **[CẦN ĐIỀN: đối chiếu tốc độ thực tế của chatbot đối thủ; ghi chú: baseline `llm_only` trong benchmark đạt p50 1.89s / p95 5.34s (17/11) và 4.66s / 9.33s (19/11)]** | **[CẦN ĐIỀN: tốc độ thực tế trên web Explorer]** | **[CẦN ĐIỀN: tốc độ thực tế]** |
+| Độ chính xác (benchmark) | **Acc `63.0%` / F1 `0.598`** (17/11), **Acc `72.0%` / F1 `0.694`** (19/11), **Acc `61.0%` / F1 `0.596`** (20/11) (`full`, `dataset_vn_benchmark_100.csv`) | **[CẦN ĐIỀN: đối chiếu đối thủ; ghi chú: baseline API `llm_only` đạt Acc 51.0%, Macro-F1 0.505]** | **[CẦN ĐIỀN: đối chiếu Explorer thực tế; ghi chú: chế độ `llm_factcheck` đạt Acc 16.0%, Macro-F1 0.085 (17/11)]** | Không áp dụng |
 
 > Các ô có nhãn **(cần người kiểm tra)** hoặc **[CẦN ĐIỀN]** đối với đối thủ bên ngoài cần được nhóm đối chiếu trực tiếp hoặc bổ sung nguồn trích dẫn trước khi đưa vào báo cáo bảo vệ.
 
@@ -101,8 +101,8 @@ Chi phí mỗi lượt = (số call Gemini × đơn giá) + (số call Tavily ×
 Chi phí thực tế mỗi lượt = Chi phí mỗi lượt × (1 − tỷ lệ cache hit)
 ```
 
-- **Số liệu từ benchmark 100 mẫu chế độ `full` (`scripts/benchmark/results/dataset_vn_benchmark_100_17-11-2026_18-34-33/`, ngày 17/11/2026, chưa bật cache API):** chi phí ước tính **$0.01713/lượt** (dùng đơn giá tham chiếu mặc định trong `run_benchmark.py`: Gemini Flash `$0.15`/`$0.60` mỗi 1M token input/output, Tavily `$0.008`/credit; trung bình `2.05` call Gemini, `2.00` credit Tavily và `3.97` call Google Fact Check).
-- **Số liệu phát triển/thử nghiệm từ `backend/data/metrics.db` (39 lượt trên `reddit`, 11–17/11/2026 UTC, không phải user test):** tỷ lệ cache hit **33.3% (13/39)**; trên 26 lượt miss cache trung bình `1.92` call Gemini, `1.77` call Tavily và `3.54` call Fact Check (chưa có đơn giá cấu hình trong môi trường chạy thử nên chi phí USD các lượt miss chưa được ghi vào DB).
+- **Số liệu từ benchmark 100 mẫu chế độ `full` (`scripts/benchmark/results/`, chưa bật cache API, dùng đơn giá tham chiếu mặc định trong `run_benchmark.py`):** đợt `17-11-2026_18-34-33` là **$0.01713/lượt**; đợt `19-11-2026_17-02-53` là **$0.01714/lượt**; đợt `20-11-2026_14-49-30` giảm còn **$0.00942/lượt** (đạt ngưỡng `≤ $0.0100`).
+- **Số liệu phát triển/thử nghiệm từ `backend/data/metrics.db` (`52` lượt trên `reddit`, không phải user test):** tỷ lệ cache hit **38.5% (`20/52`, độ trễ TB `3.1 ms`, chi phí `$0.0`)**; trên `32` lượt miss cache có độ trễ TB `10,934 ms`, trung bình `1.625` call Tavily và `3.25` call Fact Check (chưa có đơn giá cấu hình trong môi trường chạy thử nên chi phí USD các lượt miss chưa được ghi vào DB).
 - **Số liệu vận hành/chi phí hạ tầng khi thử nghiệm người dùng thật:** **[CẦN ĐIỀN: chi phí hạ tầng phân bổ và số liệu thực tế khi pilot với người dùng]**.
 
 ---
@@ -115,7 +115,7 @@ Chi phí thực tế mỗi lượt = Chi phí mỗi lượt × (1 − tỷ lệ 
 2. Backend (Python, FastAPI) với pipeline: trích claim → thu thập bằng chứng song song → đánh giá → hậu xử lý → trả kết quả.
 3. Tích hợp **Google Gemini** (`Interactions API`), **Tavily Search** và **Google Fact Check Tools API**.
 4. Cơ chế xác thực (`X-API-Key`, `X-Admin-API-Key`), giới hạn tần suất (IP/phút, key/ngày, global/ngày), ngân sách thời gian, cache kết quả (`analysis_cache`) và chống lạm dụng.
-5. Thu thập chỉ số vận hành và phản hồi người dùng: **đã triển khai backend** (`backend/app/core/metrics.py`, `backend/app/api/v1/metrics.py` với `POST /api/v1/feedback` nhận `{request_id, helpful, reason}` và `GET /api/v1/stats/summary`); phía extension đã có giao diện đánh giá 5 sao + nhận xét nhưng **đang tắt gửi mạng** (`FEEDBACK_ENDPOINT_ENABLED = false` trong `extension/src/shared/config.ts`) do chưa đồng bộ schema với backend.
+5. Thu thập chỉ số vận hành và phản hồi người dùng: **đã triển khai end-to-end** (`backend/app/core/metrics.py`, `backend/app/api/v1/metrics.py` với `POST /api/v1/feedback` hỗ trợ đánh giá 1–5 sao kèm `comment` tối đa 500 ký tự và tương thích ngược `helpful`/`reason`, `GET /api/v1/stats/summary`; phía extension đã bật `FEEDBACK_ENDPOINT_ENABLED = true` trong `extension/src/shared/config.ts`).
 6. Bộ kiểm thử tự động (backend `pytest`, extension `node --test`), GitHub Actions CI, pre-commit, tài liệu (Project Charter, SDS, Final Report).
 7. Đánh giá định lượng trên bộ dữ liệu 100 mẫu có nhãn (`dataset_vn_benchmark_100.csv`); thử nghiệm với người dùng (**[CẦN ĐIỀN: đã thực hiện / chưa thực hiện]**).
 
@@ -170,7 +170,7 @@ Chi phí thực tế mỗi lượt = Chi phí mỗi lượt × (1 − tỷ lệ 
 | 2. Backend pipeline | Trích claim, tích hợp Tavily/Fact Check, đánh giá bằng chứng, chọn & fallback model | 01/10/2026 – 04/11/2026 (theo `git log`, cần người kiểm tra) | API `/analyze`, `/models` hoạt động |
 | 3. Extension | Adapter Facebook/Reddit, selection controller, side panel, nút kiểm chứng Reddit | 28/09/2026 – 01/11/2026 (theo `git log`, cần người kiểm tra) | Extension chạy end-to-end |
 | 4. Bảo mật, vận hành, UX | Rate limit, nâng cấp A1–A3, SQLite metrics/feedback (B1), cache (C1), UX side panel (C2) | 02/10/2026 & 10/11/2026 – 15/11/2026 (theo `git log`, cần người kiểm tra) | Bản demo ổn định |
-| 5. Đánh giá và tài liệu | Bộ dữ liệu VN 100 mẫu, benchmark B2, hoàn thiện tài liệu (Charter, Final Report) | 11/11/2026 – 18/11/2026 (theo `git log`, cần người kiểm tra) | Bộ tài liệu, số liệu benchmark |
+| 5. Đánh giá và tài liệu | Bộ dữ liệu VN 100 mẫu, benchmark B2, hoàn thiện tài liệu (Charter, Final Report) | 11/11/2026 – 20/11/2026 (theo `git log`, cần người kiểm tra) | Bộ tài liệu, số liệu benchmark |
 | Nộp sản phẩm | Nộp Project Charter, SDS, Final Report lên thư mục chung | **20/11/2026** | Bộ hồ sơ nộp |
 | Bảo vệ | Theo lịch của lớp | **[CẦN ĐIỀN: ngày bảo vệ của nhóm]** | Báo cáo in nộp cho Khoa |
 
@@ -181,7 +181,7 @@ Chi phí thực tế mỗi lượt = Chi phí mỗi lượt × (1 − tỷ lệ 
 | # | Rủi ro | Mức độ | Biện pháp |
 |---|---|---|---|
 | 1 | AI kết luận sai (hallucination), gây hiểu lầm cho người dùng | Cao | Chỉ kết luận dựa trên bằng chứng đã tìm được; lọc URL không có trong nguồn (`gemini_service.py`); trả `unverified` và trần confidence `≤ 0.4` khi thiếu căn cứ; hiển thị cảnh báo `"AI có thể sai. Hãy tự đối chiếu với các nguồn uy tín."` |
-| 2 | Nguồn tìm được kém uy tín hoặc chỉ liên quan gián tiếp | Cao | Xếp hạng nguồn theo `tier1`/`tier2`/`default` (`trusted_domains.json` + `source_ranking.py`); hiển thị nhãn quan điểm (`Ủng hộ`/`Phản bác`/`Liên quan`) và ghi chú khi tất cả nguồn đều trung lập |
+| 2 | Nguồn tìm được kém uy tín hoặc chỉ liên quan gián tiếp | Cao | Xếp hạng nguồn theo `tier1`/`tier2`/`default` (`trusted_domains.json` gồm 32 domain với 28 domain Việt Nam + `source_ranking.py`); hiển thị nhãn quan điểm (`Ủng hộ`/`Phản bác`/`Liên quan`) và ghi chú khi tất cả nguồn đều trung lập |
 | 3 | Tin cũ được đăng lại như tin mới | Trung bình | Đưa ngày hiện tại theo múi giờ `Asia/Ho_Chi_Minh` vào prompt đánh giá; lưu và hiển thị `published_date` của nguồn (khi Tavily cung cấp) |
 | 4 | Prompt injection từ nội dung bài đăng hoặc nguồn web | Cao | Tách dữ liệu trong thẻ `<post>...</post>`, trung hòa `[[` và `]]` bằng `neutralize_marker_delimiters()`, làm sạch ký hiệu đánh dấu ở đầu ra và kiểm tra JSON bằng Pydantic |
 | 5 | Nền tảng đổi giao diện làm adapter hỏng | Trung bình | Cô lập selector trong adapter (`RedditAdapter` dùng `<shreddit-post>`, `[slot="title"]`, `[slot="text-body"]`); giữ chế độ bôi đen văn bản (`window.getSelection()`) trên cả Facebook và Reddit làm phương án dự phòng |
@@ -199,7 +199,7 @@ Chi phí thực tế mỗi lượt = Chi phí mỗi lượt × (1 − tỷ lệ 
 **Tiêu chí chấp nhận:**
 1. Người dùng cài extension, bôi đen đoạn văn bản trên Facebook/Reddit (hoặc bấm nút kiểm chứng trên trang chi tiết Reddit) và nhận kết quả có nguồn trong giới hạn thời gian cấu hình.
 2. Hệ thống không trả kết luận "đúng" hoặc "sai" khi không có bằng chứng (giữ kết luận `unverified` với trần độ tin cậy `0.3–0.4`).
-3. Bộ kiểm thử tự động và CI xanh (lưu ý hiện trạng: extension lint/typecheck/12 test pass; backend cần khắc phục 11 cảnh báo `ruff` và xác minh chạy `pytest` ở môi trường hỗ trợ event loop đầy đủ).
+3. Bộ kiểm thử tự động và CI xanh (lưu ý hiện trạng tới commit `f491d97`: extension lint/typecheck/12 test/build pass; backend thu thập `151` test với `test_source_ranking.py` `13/13` pass nhưng test `asyncio` chưa chạy trọn vẹn trong sandbox Windows, còn `11` cảnh báo `ruff` và lỗi `AttributeError` `extraction.tool_calls` trong `analysis_orchestrator.py` cần xử lý).
 4. Có báo cáo đánh giá với số liệu benchmark thật và phân tích lỗi, hạn chế.
 
 **Các bên liên quan:** giảng viên (đánh giá), nhóm phát triển, người dùng thử, **[CẦN ĐIỀN: đối tác/tổ chức tham gia nếu có (hoặc ghi "Không có")]**.

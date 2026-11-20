@@ -2,7 +2,7 @@
 
 Báo cáo kiểm kê tài liệu, ma trận mâu thuẫn, khẳng định đã xoá, lỗi mã nguồn ghi nhận (không sửa), quyết định cần người và kết quả chạy thử lệnh của repo TrustMeBro.
 
-Cập nhật theo commit `f491d97`, 20/11/2026.
+Cập nhật theo commit `c4af0b0` (đồng bộ tài liệu kỹ thuật với `f491d97` và cập nhật bộ tài liệu `docs/`), 20/11/2026.
 
 ## 1. Kiểm kê tài liệu
 
@@ -19,9 +19,11 @@ Cập nhật theo commit `f491d97`, 20/11/2026.
 | `extension/README.md` | Hướng dẫn build/debug extension | `3cd90d3` (2026-11-19) | Thiếu dòng commit trên header | Cập nhật header theo commit `f491d97` (51 dòng) |
 | `scripts/benchmark/README.md` | Hướng dẫn chạy benchmark 3 chế độ | `3cd90d3` (2026-11-19) | Thiếu dòng commit trên header | Cập nhật header theo commit `f491d97` (57 dòng) |
 | `scripts/DATA_GUIDE.md` | Đặc tả định dạng CSV benchmark | `3cd90d3` (2026-11-19) | Cần đồng bộ dòng commit | Cập nhật header theo commit `f491d97` (44 dòng) |
-| `docs/PROJECT_CHARTER.md` | Tài liệu môn học (Project Charter) | `b00372f` (2026-11-18) | Ngoài phạm vi đồng bộ tài liệu kỹ thuật | Không sửa |
-| `docs/FINAL_REPORT.md` | Báo cáo cuối kỳ môn học | `b00372f` (2026-11-18) | Ngoài phạm vi đồng bộ tài liệu kỹ thuật | Không sửa |
-| `docs/DOC_TODO.md` | Danh sách chỗ trống cho Charter & Final Report | `b00372f` (2026-11-18) | Thuộc nhóm báo cáo môn học | Không sửa |
+| `docs/PROJECT_CHARTER.md` | Tài liệu môn học (Project Charter) | `b00372f` (2026-11-18) | Lệch số liệu `metrics.db`, benchmark 19/11–20/11, feedback 5 sao và `151` test backend | Đồng bộ với `c4af0b0`/`f491d97`, `metrics.db` (`52` lượt) và benchmark 19–20/11 (giữ nguyên `[CẦN ĐIỀN]`) |
+| `docs/FINAL_REPORT.md` | Báo cáo cuối kỳ môn học | `b00372f` (2026-11-18) | Lệch prompt `gemini_prompts.py`, schema feedback, `32` domain, `20s` timeout và benchmark 19–20/11 | Đồng bộ toàn bộ số liệu, Phụ lục A/B, feedback 5 sao và hạn chế `f491d97` (giữ nguyên `[CẦN ĐIỀN]`) |
+| `docs/DOC_TODO.md` | Danh sách chỗ trống cho Charter & Final Report | `b00372f` (2026-11-18) | Vẫn liệt kê feedback & domain VN chưa xong; ghi `149` test | Cập nhật trạng thái đã xong của feedback/domain, thêm lỗi `extraction.tool_calls` và `151` test |
+| `docs/PROBLEMS&SOLUTION.md` | Ma trận vấn đề đã/chưa giải quyết (file untracked thuộc thư mục `docs/` bị `.gitignore`) | Dựa theo `3cd90d3` (19/11) | Có 2 dòng thừa đầu file (`Ran check...`), thiếu đợt benchmark 20/11 và lỗi `f491d97` | Xoá 2 dòng thừa, cập nhật theo `c4af0b0`/`f491d97` và benchmark 20/11 |
+| `docs/PROJECT_OVERVIEW.md` | Tổng quan dự án theo tiêu chí chấm (file untracked thuộc thư mục `docs/` bị `.gitignore`) | Dựa theo `16c4a3f` (19/11) | Dùng test `154`, ghi "working tree", chưa có benchmark 20/11 và mục 15 báo `docs/` chưa đồng bộ | Đồng bộ theo `c4af0b0`/`f491d97`, test `151`, benchmark 20/11 và trạng thái `docs/` |
 
 ## 2. Ma trận mâu thuẫn
 
@@ -56,7 +58,7 @@ Cập nhật theo commit `f491d97`, 20/11/2026.
 2. **Giấy phép và tuyên bố sử dụng:** Repo chưa có file `LICENSE` ở thư mục gốc trong khi `extension/package.json` ghi `"license": "ISC"`. Cần xác nhận giấy phép chung của dự án và có tạo file `LICENSE` hay không.
 3. **Xoá hoặc gộp tài liệu:** Đề xuất gộp phần đặc tả CSV của `scripts/DATA_GUIDE.md` vào `scripts/benchmark/README.md` và xoá `scripts/DATA_GUIDE.md`; xác nhận giữ hay gộp `backend/README.md`, `extension/README.md`, `BUSINESS.md`.
 4. **Phạm vi sản phẩm và đối tượng người dùng ban đầu:** Phần thông tin bổ sung trước khi chạy chưa điền thay cho mẫu `[VÍ DỤ: ...]`. Cần nhóm xác nhận danh sách "Ngoài phạm vi" và "Đối tượng người dùng ban đầu" chính thức để chốt trong `ROADMAP.md` và `BUSINESS.md`.
-5. **Sửa 11 lỗi Ruff và đồng bộ `docs/` môn học:** Quyết định dọn 11 lỗi Ruff để CI xanh và cập nhật các số liệu/mô tả lệch trong `docs/PROJECT_CHARTER.md`, `docs/FINAL_REPORT.md`.
+5. **Sửa lỗi `ruff` và chuẩn bị trước khi nộp:** Đã đồng bộ bộ tài liệu `docs/` theo `c4af0b0`/`f491d97`; nhóm cần dọn 11 lỗi Ruff để CI xanh và điền các chỗ `[CẦN ĐIỀN]` trong `docs/DOC_TODO.md`. Lưu ý `.gitignore` dòng 71 đang ignore `docs/`, nên các file chưa track trong `docs/` (`PROJECT_OVERVIEW.md`, `PROBLEMS&SOLUTION.md`) sẽ không hiện trong `git status` mặc định trừ khi force-add.
 
 ## 6. Kết quả chạy thử lệnh
 
